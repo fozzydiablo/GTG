@@ -5,6 +5,7 @@ import {
   getSessions, getOrCreateTodaySession, getEntry, updateEntry,
   deleteEntry, exerciseHistory, epley1RM,
 } from './store.js';
+import { initPWA } from './pwa.js';
 
 // ---------- tiny helpers ----------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -40,6 +41,7 @@ window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', () => {
   $$('.tab').forEach((t) => t.addEventListener('click', () => go(t.dataset.route)));
   render();
+  initPWA();
 });
 
 function render() {
