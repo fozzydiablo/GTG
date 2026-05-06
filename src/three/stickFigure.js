@@ -256,25 +256,29 @@ export function applyEnvironment(skel, p) {
   skel.root.rotation.set(0, p.rootRotY || 0, 0);
 
   if (p.lying) {
-    // Supine on bench: head toward -Z, body horizontal.
+    // Supine on bench: head toward -Z, body horizontal. root.z = 1.2 puts
+    // hips at world z=0; body extends head-direction toward -Z.
     skel.root.rotation.x = -Math.PI / 2;
-    skel.root.position.set(0, 0.55, 1.0);
+    skel.root.position.set(0, 0.55, 1.2);
     env.flatBench = true;
   } else if (p.lyingFloor) {
     skel.root.rotation.x = -Math.PI / 2;
-    skel.root.position.set(0, 0.13, 0.6);
+    skel.root.position.set(0, 0.13, 1.2);
     env.floorMat = true;
   } else if (p.plank) {
-    // Prone (face down). Rig fully controls body height via rootY.
+    // Prone (face down). Body lies along z-axis: root.z = -1.2 puts hips at
+    // world z=0 so the body straddles the origin (head at +z, feet at -z).
+    // Rig fully controls body height via rootY.
     skel.root.rotation.x = Math.PI / 2;
-    skel.root.position.set(0, 0, 0.4);
+    skel.root.position.set(0, 0, -1.2);
     env.floorMat = true;
   } else if (p.incline) {
-    const ang = -Math.PI / 4.5;
-    skel.root.rotation.x = ang;
-    skel.root.position.set(0, 0.55, 0.4);
+    // Keep figure upright; rig leans torso back via `spine` and sits via
+    // hip/knee. Position so hips end up on the seat (y≈0.5) at z≈0.55.
+    skel.root.position.set(0, -0.7, 0.55);
     env.inclineBench = true;
-    env.inclineAngle = ang;
+    env.inclineAngle = -Math.PI / 4;
+    env.hideFloor = true;
   } else if (p.hanging) {
     // Rig fully controls body height via rootY (negative = hanging below bar).
     skel.root.position.set(0, 0, 0);
@@ -353,14 +357,16 @@ export function buildEnvironment(scene) {
 
   // Adjustable incline bench (seat + angled backrest)
   const inclineBench = new THREE.Group();
+  // Seat under the figure's hips (which sit at y≈0.5, z≈0.55).
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.55), benchMat);
   seat.position.set(0, 0.45, 0.55);
   inclineBench.add(seat);
-  const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 1.1), benchMat);
-  // Angle is set in applyEnvVisibility based on env.inclineAngle.
+  // Backrest is a vertical slab; rotation tilts it backward from a hinge
+  // at the back of the seat (z≈0.275, y≈0.5). Length 1.0 along Y.
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.1), benchMat);
   inclineBench.add(back);
   inclineBench.userData.back = back;
-  for (const z of [0.7, -0.4]) {
+  for (const z of [0.78, 0.05]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.45, 0.06),
       new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.8 }));
     leg.position.set(0, 0.225, z);
@@ -456,10 +462,17 @@ export function applyEnvVisibility(env, hints) {
   env.floor.visible = !hints.hideFloor;
 
   if (hints.inclineBench) {
-    const ang = hints.inclineAngle || -Math.PI / 4.5;
+    const ang = hints.inclineAngle || -Math.PI / 4;
     const back = env.inclineBench.userData.back;
     back.rotation.x = ang;
-    // Position the backrest so its bottom edge meets the seat at z ≈ 0.3
-    back.position.set(0, 0.55 + Math.cos(-ang) * 0.5, 0.3 - Math.sin(-ang) * 0.5);
+    // Backrest is a 1.0m-tall slab. Hinge it at the seat back edge
+    // (y=0.5, z=0.55). After R(ang X), the backrest's local +Y axis points
+    // (0, cos ang, sin ang) in world; its center is half that length above
+    // the hinge.
+    back.position.set(
+      0,
+      0.5 + 0.5 * Math.cos(ang),
+      0.55 + 0.5 * Math.sin(ang),
+    );
   }
 }

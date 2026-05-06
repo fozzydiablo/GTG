@@ -63,8 +63,6 @@ export const EXERCISES = [
     tempo: 3.0,
     rig: (t) => {
       const phase = wave(t);
-      // Bottom = elbow ~95°, abduct ~50° (upper arm tucked, not flared 90°).
-      // Top   = elbow nearly locked, abduct slightly less.
       const elbow = lerp(PI * 0.5, PI * 0.04, phase);
       const abduct = lerp(0.55, 0.32, phase);
       return pose({
@@ -75,13 +73,13 @@ export const EXERCISES = [
         rShoulderAbduct: abduct,
         lElbow: elbow,
         rElbow: elbow,
-        // Feet planted flat: thigh extended (down to floor), knee bent ~90°.
-        lHip: PI / 2, rHip: PI / 2,
-        lKnee: PI * 0.55, rKnee: PI * 0.55,
+        // Body extends along the bench. Slight knee flex avoids stiff legs.
+        lHip: 0, rHip: 0,
+        lKnee: PI * 0.08, rKnee: PI * 0.08,
         barbell: true,
       });
     },
-    camera: { view: 'side', position: [3.4, 1.4, 0.9], target: [0, 0.95, 0] },
+    camera: { view: 'side', position: [3.0, 1.3, 0.6], target: [0, 0.7, 0] },
   },
   {
     id: 'incline-bench',
@@ -99,26 +97,27 @@ export const EXERCISES = [
     rig: (t) => {
       const phase = wave(t);
       const elbow = lerp(PI * 0.55, PI * 0.05, phase);
-      // Slightly more abduction at bottom (DBs travel wider than a bar).
-      const abduct = lerp(0.55, 0.3, phase);
-      // Shoulder rotates forward (relative to torso) so DBs press up vertically
-      // even though the torso is reclined.
-      const shoulder = lerp(-PI * 0.55, -PI * 0.85, phase);
+      const abduct = lerp(0.32, 0.22, phase);
+      // With a 45° back lean (spine = -π/4), arms pointing straight up means
+      // shoulder + spine = ±π. So at top of press, shoulder = -3π/4.
+      // At bottom, arm is ~45° from vertical, hands by upper chest.
+      const shoulder = lerp(-PI * 0.5, -PI * 0.75, phase);
       return pose({
         incline: true,
+        spine: -PI / 4,
         lShoulder: shoulder,
         rShoulder: shoulder,
         lShoulderAbduct: abduct,
         rShoulderAbduct: abduct,
         lElbow: elbow,
         rElbow: elbow,
-        // Feet planted on floor, shins ~vertical.
-        lHip: PI * 0.5, rHip: PI * 0.5,
-        lKnee: PI * 0.45, rKnee: PI * 0.45,
+        // Sit on bench: thighs along seat (90° hip flex), calves down (90° knee).
+        lHip: PI / 2, rHip: PI / 2,
+        lKnee: PI / 2, rKnee: PI / 2,
         dumbbells: true,
       });
     },
-    camera: { view: 'side', position: [3.2, 1.6, 1.2], target: [0, 1.1, 0] },
+    camera: { view: 'side', position: [3.0, 1.3, 1.6], target: [0, 0.85, 0.2] },
   },
   {
     id: 'overhead-press',
@@ -184,7 +183,7 @@ export const EXERCISES = [
         lKnee: 0, rKnee: 0,
       });
     },
-    camera: { view: 'side', position: [3.6, 1.2, 0], target: [0, 0.7, 0] },
+    camera: { view: 'side', position: [3.0, 1.2, 0], target: [0, 0.8, 0] },
   },
   {
     id: 'dip',
@@ -202,24 +201,26 @@ export const EXERCISES = [
     rig: (t) => {
       const phase = wave(t);
       const elbow = lerp(PI * 0.55, PI * 0.05, phase);
-      const shoulder = lerp(PI * 0.04, 0, phase);
-      const abduct = 0.16;
-      // Hands fixed at dip-bar height (y=1.25). Vertical hand-to-shoulder
-      // distance with shoulder ~ 0 is uA + fA*cos(e) = 0.55 + 0.5*cos(e).
-      // root.y = 1.25 - 1.95 + 0.55 + 0.5*cos(e) - 1.95… simplified:
-      // shoulder.y = 1.25 + 0.55 + 0.5*cos(e); root.y = shoulder.y - 1.95.
+      // Arms tucked alongside torso (shoulder neutral); spine gives the lean.
+      const shoulder = 0;
+      const abduct = 0.14;
+      // Hands locked at dip-bar height (y=1.25). Body rises/falls so:
+      // shoulder.y = 1.25 + uA + fA*cos(e) = 1.8 + 0.5*cos(e);
+      // root.y = shoulder.y - 1.95 = -0.15 + 0.5*cos(e).
       const rootY = -0.15 + 0.5 * Math.cos(elbow);
       return pose({
         suspended: true,
         rootY,
+        spine: 0.12, // slight forward lean
         lShoulder: shoulder, rShoulder: shoulder,
         lShoulderAbduct: abduct, rShoulderAbduct: abduct,
         lElbow: elbow, rElbow: elbow,
-        lHip: -0.2, rHip: -0.2,
-        lKnee: PI * 0.55, rKnee: PI * 0.55,
+        // Legs hang straight; floor is hidden so feet position is fine.
+        lHip: 0, rHip: 0,
+        lKnee: PI * 0.1, rKnee: PI * 0.1,
       });
     },
-    camera: { view: 'side', position: [3.2, 1.4, 0.6], target: [0, 1.0, 0] },
+    camera: { view: 'side', position: [2.8, 1.4, 0.4], target: [0, 1.05, 0] },
   },
   {
     id: 'pullup',
@@ -269,24 +270,21 @@ export const EXERCISES = [
     tempo: 2.4,
     rig: (t) => {
       const phase = wave(t);
-      // Bottom: arms straight down. Top: bar at belly, elbows behind torso.
       const elbow = lerp(PI * 0.05, PI * 0.85, phase);
-      // Shoulder drives slightly forward at bottom (arm hanging) and slightly
-      // backward at top (elbow back). With torso bent, "shoulder = 0" already
-      // points the arm down toward the floor.
       const shoulder = lerp(0, -PI * 0.15, phase);
       return pose({
-        spine: PI * 0.42, // hinge ~75° forward
+        // Hinge ~50° from vertical (i.e., torso ~40° above horizontal).
+        spine: PI * 0.28,
         lShoulder: shoulder, rShoulder: shoulder,
         lShoulderAbduct: 0.1, rShoulderAbduct: 0.1,
         lElbow: elbow, rElbow: elbow,
-        // Soft knee bend.
+        // Soft knee bend, slight hip set-back via small forward hip flex.
         lHip: PI * 0.05, rHip: PI * 0.05,
         lKnee: PI * 0.18, rKnee: PI * 0.18,
         barbell: true,
       });
     },
-    camera: { view: 'side', position: [3.2, 1.5, 0.8], target: [0, 1.0, 0] },
+    camera: { view: 'side', position: [3.4, 1.2, 0.6], target: [0, 0.9, 0] },
   },
   {
     id: 'lat-pulldown',
@@ -402,7 +400,7 @@ export const EXERCISES = [
         lKnee: 0, rKnee: 0,
       });
     },
-    camera: { view: 'side', position: [3.4, 0.9, 0], target: [0, 0.5, 0] },
+    camera: { view: 'side', position: [3.2, 1.0, 0], target: [0, 0.55, 0] },
   },
   {
     id: 'crunch',
@@ -432,7 +430,7 @@ export const EXERCISES = [
         lKnee: PI * 0.55, rKnee: PI * 0.55,
       });
     },
-    camera: { view: 'side', position: [3.2, 1.0, 0], target: [0, 0.4, 0] },
+    camera: { view: 'side', position: [3.0, 1.0, 0], target: [0, 0.4, 0] },
   },
   {
     id: 'russian-twist',
