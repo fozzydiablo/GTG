@@ -1,28 +1,45 @@
-// Each exercise defines an animation `rig(t)` returning joint angles (radians)
-// for the stick figure. `t` is a phase in [0, 1] that loops.
-// Angles use this convention (in the figure's local space, viewer in front):
-//   shoulder/elbow/hip/knee:   0 = arm/leg straight down,
-//                              positive rotates forward (toward viewer-right when viewed from side).
-// Most exercises are framed so that rotating the figure shows the motion clearly.
+// Each exercise defines an animation `rig(t)` returning a pose for the
+// stick figure plus environment/equipment hints (`lying`, `barbell`, etc.).
+// `t` is a phase in [0, 1] that loops.
+//
+// Rotation convention (figure faces +Z, limbs hang along -Y at neutral):
+//   shoulderForward / hipForward — rotate around +X.
+//     With arm hanging at -Y, +π/2 rotates the limb to -Z (behind the figure),
+//     -π/2 rotates it to +Z (in front), ±π rotates it to +Y (overhead).
+//   shoulderAbduct — rotate the upper arm out to the side (around Z).
+//   elbow / knee — bend (around +X). Positive = limb bent.
+// `rootRotY` rotates the whole figure around Y (used for twists).
+//
+// Environment hints (one per exercise):
+//   lying        — supine on flat bench (head at -Z end of bench)
+//   lyingFloor   — supine on floor mat
+//   plank        — prone on floor mat (face down)
+//   incline      — sitting on incline bench at ~40°
+//   hanging      — hanging from overhead pull-up bar
+//   suspended    — supported on parallel dip bars
+//   latSeated    — seated at lat-pulldown station
+//   seatedFloor  — seated on the floor (russian twist)
+//   cableStanding— standing in front of a cable column
+//
+// Equipment hints (rendered on top of the figure):
+//   barbell      — straight bar between both hands
+//   dumbbells    — small dumbbell in each hand
+//   cables       — 'overhead' draws cables from each hand up to a high pulley
+//   plate        — single weight plate held in both hands
+//   latBar       — wide-grip lat bar pinned between both hands
 
 const PI = Math.PI;
 const lerp = (a, b, t) => a + (b - a) * t;
-// pingpong: 0->1->0
-const pp = (t) => 1 - Math.abs(1 - 2 * t);
-// smooth pingpong using cosine
 const wave = (t) => 0.5 - 0.5 * Math.cos(2 * PI * t);
 
-// Default neutral pose (radians).
 const NEUTRAL = {
-  spine: 0,           // forward bend at hips
-  neck: 0,
-  lShoulder: 0, rShoulder: 0,   // forward raise
-  lShoulderAbduct: 0, rShoulderAbduct: 0, // out to side
-  lElbow: 0, rElbow: 0,         // bend
-  lHip: 0, rHip: 0,             // forward raise
-  lKnee: 0, rKnee: 0,           // bend
-  rootY: 0,           // vertical offset
-  rootRotY: 0,        // body rotation around vertical
+  spine: 0, neck: 0,
+  lShoulder: 0, rShoulder: 0,
+  lShoulderAbduct: 0, rShoulderAbduct: 0,
+  lElbow: 0, rElbow: 0,
+  lHip: 0, rHip: 0,
+  lKnee: 0, rKnee: 0,
+  rootY: 0, rootRotY: 0,
 };
 
 function pose(overrides) {
@@ -36,33 +53,35 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Chest', 'Triceps', 'Front Delts'],
     cues: [
-      'Plant feet, squeeze shoulder blades down and back.',
-      'Bar path: lower to mid-chest, press up and slightly back over shoulders.',
-      'Wrists stacked over elbows, full lockout at the top.',
+      'Plant feet flat — drive into the floor and keep upper back tight on the bench.',
+      'Unrack and let the bar settle over your shoulders before the first rep.',
+      'Lower under control to mid-chest (nipple line), elbows tucked ~60° from torso.',
+      'Press up and slightly back so it finishes over your shoulders, not your face.',
     ],
     defaults: { sets: 4, reps: 5, weight: 95 },
     isBench: true,
-    view: 'side',
+    tempo: 3.0,
     rig: (t) => {
-      // Lying on bench, arms press up. Show as figure rotated 90 to "lie back".
       const phase = wave(t);
-      const elbow = lerp(PI * 0.05, PI * 0.85, phase); // 5° (near locked) -> 95° bend
-      const shoulder = lerp(-PI * 0.02, PI * 0.25, phase); // arm angle
+      // Bottom = elbow ~95°, abduct ~50° (upper arm tucked, not flared 90°).
+      // Top   = elbow nearly locked, abduct slightly less.
+      const elbow = lerp(PI * 0.5, PI * 0.04, phase);
+      const abduct = lerp(0.55, 0.32, phase);
       return pose({
-        rootRotY: 0,
-        lying: true,           // hint for renderer to lay figure on bench
-        lShoulder: -PI / 2 + shoulder,
-        rShoulder: -PI / 2 + shoulder,
-        lShoulderAbduct: 0.35,
-        rShoulderAbduct: 0.35,
+        lying: true,
+        lShoulder: -PI / 2,
+        rShoulder: -PI / 2,
+        lShoulderAbduct: abduct,
+        rShoulderAbduct: abduct,
         lElbow: elbow,
         rElbow: elbow,
-        lHip: PI * 0.5,        // legs hanging off side
-        rHip: PI * 0.5,
-        lKnee: PI * 0.5,
-        rKnee: PI * 0.5,
+        // Feet planted flat: thigh extended (down to floor), knee bent ~90°.
+        lHip: PI / 2, rHip: PI / 2,
+        lKnee: PI * 0.55, rKnee: PI * 0.55,
+        barbell: true,
       });
     },
+    camera: { view: 'side', position: [3.4, 1.4, 0.9], target: [0, 0.95, 0] },
   },
   {
     id: 'incline-bench',
@@ -70,29 +89,36 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Upper Chest', 'Front Delts'],
     cues: [
-      'Set bench to ~30°. Dumbbells start at upper chest.',
-      'Press up and slightly inward, controlled descent.',
+      'Set bench to 30–45°. Sit back hard so shoulder blades stay pinned.',
+      'Start dumbbells at the upper-chest line, palms forward.',
+      'Press up and slightly inward without clanging the bells together.',
+      'Lower under control until you feel a stretch on the upper chest.',
     ],
     defaults: { sets: 3, reps: 8, weight: 30 },
-    view: 'side',
+    tempo: 2.6,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.1, PI * 0.85, phase);
-      const shoulder = lerp(-PI * 0.65, -PI * 0.35, phase);
+      const elbow = lerp(PI * 0.55, PI * 0.05, phase);
+      // Slightly more abduction at bottom (DBs travel wider than a bar).
+      const abduct = lerp(0.55, 0.3, phase);
+      // Shoulder rotates forward (relative to torso) so DBs press up vertically
+      // even though the torso is reclined.
+      const shoulder = lerp(-PI * 0.55, -PI * 0.85, phase);
       return pose({
         incline: true,
         lShoulder: shoulder,
         rShoulder: shoulder,
-        lShoulderAbduct: 0.3,
-        rShoulderAbduct: 0.3,
+        lShoulderAbduct: abduct,
+        rShoulderAbduct: abduct,
         lElbow: elbow,
         rElbow: elbow,
-        lHip: PI * 0.15,
-        rHip: PI * 0.15,
-        lKnee: PI * 0.5,
-        rKnee: PI * 0.5,
+        // Feet planted on floor, shins ~vertical.
+        lHip: PI * 0.5, rHip: PI * 0.5,
+        lKnee: PI * 0.45, rKnee: PI * 0.45,
+        dumbbells: true,
       });
     },
+    camera: { view: 'side', position: [3.2, 1.6, 1.2], target: [0, 1.1, 0] },
   },
   {
     id: 'overhead-press',
@@ -100,25 +126,32 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Shoulders', 'Triceps', 'Upper Chest'],
     cues: [
-      'Bar at front rack, elbows just in front of bar.',
-      'Press straight up, push head through at lockout.',
-      'Brace core, glutes tight — no leg drive.',
+      'Bar racked on the front delts, elbows just in front of the bar.',
+      'Brace abs and squeeze glutes — no leg drive.',
+      'Press straight up; once the bar clears your forehead, push your head through.',
+      'Finish with biceps near ears, bar over mid-foot.',
     ],
     defaults: { sets: 4, reps: 6, weight: 65 },
-    view: 'front',
+    tempo: 2.5,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.85, PI * 0.05, phase); // bent -> straight up
-      const shoulder = lerp(PI * 0.15, PI * 0.95, phase);
+      // Bottom: bar at clavicle. Upper arm angled slightly forward (~15°),
+      // elbow bent ~150° so forearm points up to the bar.
+      // Top: arms locked overhead, biceps by ears.
+      const shoulder = lerp(-PI * 0.18, -PI, phase);
+      const elbow = lerp(PI * 0.85, PI * 0.04, phase);
+      const abduct = lerp(0.22, 0.18, phase);
       return pose({
-        lShoulder: -shoulder,
-        rShoulder: -shoulder,
-        lShoulderAbduct: 0.25,
-        rShoulderAbduct: 0.25,
+        lShoulder: shoulder,
+        rShoulder: shoulder,
+        lShoulderAbduct: abduct,
+        rShoulderAbduct: abduct,
         lElbow: elbow,
         rElbow: elbow,
+        barbell: true,
       });
     },
+    camera: { view: '3q', position: [1.8, 1.7, 2.6], target: [0, 1.5, 0] },
   },
   {
     id: 'pushup',
@@ -126,26 +159,32 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Chest', 'Triceps', 'Core'],
     cues: [
-      'Hands under shoulders, body in a rigid plank.',
-      'Lower chest to fists, elbows ~45° from torso.',
+      'Hands directly under shoulders, fingers spread.',
+      'Body in one rigid line — squeeze glutes, brace abs.',
+      'Lower until chest grazes the floor, elbows ~45° from torso.',
+      'Press through the floor; full lockout at the top.',
     ],
     defaults: { sets: 3, reps: 12, weight: 0 },
-    view: 'side',
+    tempo: 2.0,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.05, PI * 0.85, phase);
+      const elbow = lerp(PI * 0.55, PI * 0.05, phase);
+      const shoulder = -PI / 2;
+      const abduct = lerp(0.18, 0.32, phase);
+      // Hands stay on the floor (y=0); body height drops as elbows bend.
+      // Vertical hand-to-shoulder distance = upperArm + forearm * cos(elbow) = 0.55 + 0.5*cos(e).
+      const rootY = 0.55 + 0.5 * Math.cos(elbow);
       return pose({
         plank: true,
-        lShoulder: -PI / 2,
-        rShoulder: -PI / 2,
-        lElbow: elbow,
-        rElbow: elbow,
-        lHip: PI / 2,
-        rHip: PI / 2,
-        lKnee: 0,
-        rKnee: 0,
+        rootY,
+        lShoulder: shoulder, rShoulder: shoulder,
+        lShoulderAbduct: abduct, rShoulderAbduct: abduct,
+        lElbow: elbow, rElbow: elbow,
+        lHip: 0, rHip: 0,
+        lKnee: 0, rKnee: 0,
       });
     },
+    camera: { view: 'side', position: [3.6, 1.2, 0], target: [0, 0.7, 0] },
   },
   {
     id: 'dip',
@@ -153,29 +192,34 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Triceps', 'Lower Chest'],
     cues: [
-      'Lock arms, lean torso slightly forward.',
-      'Lower until upper arm is parallel; press to lockout.',
+      'Lock arms at the top, slight forward lean for chest-dip emphasis.',
+      'Keep elbows tracking back, not flaring out wide.',
+      'Lower until upper arms are parallel with the floor.',
+      'Press hard to a full lockout — squeeze the triceps.',
     ],
     defaults: { sets: 3, reps: 8, weight: 0 },
-    view: 'side',
+    tempo: 2.4,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.05, PI * 0.95, phase);
+      const elbow = lerp(PI * 0.55, PI * 0.05, phase);
+      const shoulder = lerp(PI * 0.04, 0, phase);
+      const abduct = 0.16;
+      // Hands fixed at dip-bar height (y=1.25). Vertical hand-to-shoulder
+      // distance with shoulder ~ 0 is uA + fA*cos(e) = 0.55 + 0.5*cos(e).
+      // root.y = 1.25 - 1.95 + 0.55 + 0.5*cos(e) - 1.95… simplified:
+      // shoulder.y = 1.25 + 0.55 + 0.5*cos(e); root.y = shoulder.y - 1.95.
+      const rootY = -0.15 + 0.5 * Math.cos(elbow);
       return pose({
         suspended: true,
-        lShoulder: 0,
-        rShoulder: 0,
-        lShoulderAbduct: 0.05,
-        rShoulderAbduct: 0.05,
-        lElbow: elbow,
-        rElbow: elbow,
-        lHip: PI * 0.25,
-        rHip: PI * 0.25,
-        lKnee: PI * 0.5,
-        rKnee: PI * 0.5,
-        rootY: -elbow * 0.15,
+        rootY,
+        lShoulder: shoulder, rShoulder: shoulder,
+        lShoulderAbduct: abduct, rShoulderAbduct: abduct,
+        lElbow: elbow, rElbow: elbow,
+        lHip: -0.2, rHip: -0.2,
+        lKnee: PI * 0.55, rKnee: PI * 0.55,
       });
     },
+    camera: { view: 'side', position: [3.2, 1.4, 0.6], target: [0, 1.0, 0] },
   },
   {
     id: 'pullup',
@@ -183,31 +227,32 @@ export const EXERCISES = [
     category: 'pull',
     primary: ['Lats', 'Biceps', 'Upper Back'],
     cues: [
-      'Dead hang start, shoulders packed.',
-      'Pull chest to bar, drive elbows to hips.',
+      'Dead hang start, shoulders packed (don\'t shrug to your ears).',
+      'Squeeze the bar and pull your elbows down to your hips.',
+      'Bring chest toward the bar; chin clears the bar at the top.',
+      'Lower with control to a full hang each rep.',
     ],
     defaults: { sets: 3, reps: 6, weight: 0 },
-    view: 'front',
+    tempo: 2.4,
     rig: (t) => {
       const phase = wave(t);
-      // shoulder fully overhead at hang -> elbows tucked, arms ~90° at top
-      const shoulder = lerp(PI, PI * 0.55, phase);
-      const elbow = lerp(PI * 0.05, PI * 0.85, phase);
+      const elbow = lerp(0, PI * 0.7, phase);
+      // Hands stay at the bar (y=2.5). Vertical hand-to-shoulder distance
+      // (with shoulder = -π) is 0.55 + 0.5*cos(elbow). Body height adjusts.
+      // shoulder.y = root.y + 1.95 ⇒ root.y = bar.y - 2.5 - 0.5*cos(elbow).
+      const rootY = -0.5 * Math.cos(elbow);
       return pose({
         hanging: true,
-        lShoulder: -shoulder,
-        rShoulder: -shoulder,
-        lShoulderAbduct: 0.45,
-        rShoulderAbduct: 0.45,
-        lElbow: elbow,
-        rElbow: elbow,
-        lHip: 0.05,
-        rHip: 0.05,
-        lKnee: 0.4,
-        rKnee: 0.4,
-        rootY: lerp(0, 0.6, phase),
+        rootY,
+        lShoulder: -PI, rShoulder: -PI,
+        lShoulderAbduct: 0.42, rShoulderAbduct: 0.42,
+        lElbow: elbow, rElbow: elbow,
+        // Slight bend so feet aren't dramatic; floor is hidden anyway.
+        lHip: 0.05, rHip: 0.05,
+        lKnee: PI * 0.2, rKnee: PI * 0.2,
       });
     },
+    camera: { view: 'front', position: [0.4, 2.0, 3.4], target: [0, 1.8, 0] },
   },
   {
     id: 'row',
@@ -215,27 +260,33 @@ export const EXERCISES = [
     category: 'pull',
     primary: ['Mid Back', 'Lats', 'Biceps'],
     cues: [
-      'Hinge at hips, flat back ~45°.',
-      'Pull bar to belly button, elbows tight.',
+      'Hinge at the hips, soft knees, flat back at ~45°.',
+      'Bar starts hanging at arm\'s length, just below the knees.',
+      'Pull the bar to the lower chest / upper abs, elbows tucked.',
+      'Squeeze the shoulder blades, then lower under control.',
     ],
     defaults: { sets: 4, reps: 8, weight: 95 },
-    view: 'side',
+    tempo: 2.4,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.08, PI * 0.85, phase);
-      const shoulder = lerp(-PI * 0.05, PI * 0.4, phase);
+      // Bottom: arms straight down. Top: bar at belly, elbows behind torso.
+      const elbow = lerp(PI * 0.05, PI * 0.85, phase);
+      // Shoulder drives slightly forward at bottom (arm hanging) and slightly
+      // backward at top (elbow back). With torso bent, "shoulder = 0" already
+      // points the arm down toward the floor.
+      const shoulder = lerp(0, -PI * 0.15, phase);
       return pose({
-        spine: PI * 0.4,
-        lShoulder: shoulder,
-        rShoulder: shoulder,
-        lElbow: elbow,
-        rElbow: elbow,
-        lHip: PI * 0.4,
-        rHip: PI * 0.4,
-        lKnee: PI * 0.15,
-        rKnee: PI * 0.15,
+        spine: PI * 0.42, // hinge ~75° forward
+        lShoulder: shoulder, rShoulder: shoulder,
+        lShoulderAbduct: 0.1, rShoulderAbduct: 0.1,
+        lElbow: elbow, rElbow: elbow,
+        // Soft knee bend.
+        lHip: PI * 0.05, rHip: PI * 0.05,
+        lKnee: PI * 0.18, rKnee: PI * 0.18,
+        barbell: true,
       });
     },
+    camera: { view: 'side', position: [3.2, 1.5, 0.8], target: [0, 1.0, 0] },
   },
   {
     id: 'lat-pulldown',
@@ -243,53 +294,59 @@ export const EXERCISES = [
     category: 'pull',
     primary: ['Lats', 'Biceps'],
     cues: [
-      'Slight backward lean, chest up.',
-      'Pull bar to upper chest, drive elbows down.',
+      'Knees locked under the pad, slight backward lean — don\'t rock.',
+      'Wide grip; start with arms fully extended overhead.',
+      'Pull the bar to the upper chest, driving elbows down and back.',
+      'Squeeze lats at the bottom, control the bar back up.',
     ],
     defaults: { sets: 3, reps: 10, weight: 100 },
-    view: 'front',
+    tempo: 2.4,
     rig: (t) => {
       const phase = wave(t);
-      const shoulder = lerp(PI * 0.95, PI * 0.55, phase);
-      const elbow = lerp(PI * 0.1, PI * 0.85, phase);
+      // Top of motion (bar at chest): shoulder ~-π*0.55, elbow bent.
+      // Bottom of motion (arms extended overhead): shoulder ~-π, elbow nearly straight.
+      const shoulder = lerp(-PI, -PI * 0.55, phase);
+      const elbow = lerp(0.05, PI * 0.85, phase);
       return pose({
-        seated: true,
-        lShoulder: -shoulder,
-        rShoulder: -shoulder,
-        lShoulderAbduct: 0.5,
-        rShoulderAbduct: 0.5,
-        lElbow: elbow,
-        rElbow: elbow,
-        lHip: PI * 0.5,
-        rHip: PI * 0.5,
-        lKnee: PI * 0.5,
-        rKnee: PI * 0.5,
+        latSeated: true,
+        spine: -0.18, // slight backward lean
+        lShoulder: shoulder, rShoulder: shoulder,
+        lShoulderAbduct: 0.55, rShoulderAbduct: 0.55, // wide grip
+        lElbow: elbow, rElbow: elbow,
+        // Thighs flat on seat, knees ~90°.
+        lHip: PI * 0.5, rHip: PI * 0.5,
+        lKnee: PI * 0.5, rKnee: PI * 0.5,
+        cables: 'overhead',
+        latBar: true,
       });
     },
+    camera: { view: 'front', position: [0.2, 1.6, 3.4], target: [0, 1.4, 0] },
   },
   {
     id: 'bicep-curl',
-    name: 'Bicep Curl',
+    name: 'DB Bicep Curl',
     category: 'pull',
     primary: ['Biceps'],
     cues: [
-      'Elbows pinned to sides, no swinging.',
-      'Squeeze at the top, controlled descent.',
+      'Stand tall, dumbbells at your sides, palms forward.',
+      'Pin elbows to your ribs — no swinging or shoulder roll.',
+      'Curl up, squeeze the bicep at the top.',
+      'Lower under control; don\'t bounce out of the stretch.',
     ],
     defaults: { sets: 3, reps: 10, weight: 25 },
-    view: 'front',
+    tempo: 2.0,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.05, PI * 0.95, phase);
+      const elbow = lerp(PI * 0.04, PI * 0.92, phase);
       return pose({
-        lShoulder: 0,
-        rShoulder: 0,
-        lShoulderAbduct: 0.08,
-        rShoulderAbduct: 0.08,
-        lElbow: elbow,
-        rElbow: elbow,
+        // Shoulder neutral, slight outward angle so dumbbells clear thighs.
+        lShoulder: -0.04, rShoulder: -0.04,
+        lShoulderAbduct: 0.1, rShoulderAbduct: 0.1,
+        lElbow: elbow, rElbow: elbow,
+        dumbbells: true,
       });
     },
+    camera: { view: '3q', position: [2.2, 1.4, 2.4], target: [0, 1.2, 0] },
   },
   {
     id: 'tricep-pushdown',
@@ -297,23 +354,26 @@ export const EXERCISES = [
     category: 'push',
     primary: ['Triceps'],
     cues: [
-      'Elbows pinned to sides.',
-      'Extend fully without rocking torso.',
+      'Stand close to the column, slight forward lean from the hips.',
+      'Pin elbows to your ribs — they don\'t move.',
+      'Press the bar down to thigh level, squeeze the triceps.',
+      'Let the bar return only as far as 90° — keep tension on the muscle.',
     ],
     defaults: { sets: 3, reps: 12, weight: 40 },
-    view: 'front',
+    tempo: 1.8,
     rig: (t) => {
       const phase = wave(t);
-      const elbow = lerp(PI * 0.95, PI * 0.05, phase);
+      const elbow = lerp(PI * 0.92, PI * 0.05, phase);
       return pose({
-        lShoulder: 0,
-        rShoulder: 0,
-        lShoulderAbduct: 0.08,
-        rShoulderAbduct: 0.08,
-        lElbow: elbow,
-        rElbow: elbow,
+        cableStanding: true,
+        spine: 0.1, // slight forward lean
+        lShoulder: 0.05, rShoulder: 0.05,
+        lShoulderAbduct: 0.1, rShoulderAbduct: 0.1,
+        lElbow: elbow, rElbow: elbow,
+        cables: 'overhead',
       });
     },
+    camera: { view: '3q', position: [2.0, 1.4, 2.6], target: [0, 1.1, 0] },
   },
   {
     id: 'plank',
@@ -321,26 +381,28 @@ export const EXERCISES = [
     category: 'core',
     primary: ['Core', 'Shoulders'],
     cues: [
-      'Forearms under shoulders, body in a line.',
-      'Squeeze glutes, brace abs, breathe.',
+      'Forearms on the floor, shoulders stacked over elbows.',
+      'Body is one straight line from heels to head.',
+      'Squeeze glutes and brace abs — don\'t let hips sag.',
+      'Breathe slow and even through the hold.',
     ],
     defaults: { sets: 3, reps: 60, weight: 0, unit: 'sec' },
-    view: 'side',
+    tempo: 4.0,
     rig: (t) => {
-      const breathe = Math.sin(2 * PI * t) * 0.02;
+      const breathe = Math.sin(2 * PI * t) * 0.025;
+      // Forearm-supported plank: shoulder = upperArm above floor.
       return pose({
         plank: true,
         forearm: true,
-        lShoulder: -PI / 2,
-        rShoulder: -PI / 2,
-        lElbow: PI / 2,
-        rElbow: PI / 2,
-        lHip: PI / 2 + breathe,
-        rHip: PI / 2 + breathe,
-        lKnee: 0,
-        rKnee: 0,
+        rootY: 0.55,
+        lShoulder: -PI / 2, rShoulder: -PI / 2,
+        lShoulderAbduct: 0.18, rShoulderAbduct: 0.18,
+        lElbow: PI / 2, rElbow: PI / 2,
+        lHip: -breathe, rHip: -breathe,
+        lKnee: 0, rKnee: 0,
       });
     },
+    camera: { view: 'side', position: [3.4, 0.9, 0], target: [0, 0.5, 0] },
   },
   {
     id: 'crunch',
@@ -348,27 +410,29 @@ export const EXERCISES = [
     category: 'core',
     primary: ['Abs'],
     cues: [
-      'Lower back stays on the floor.',
-      'Curl ribs toward hips, exhale on the way up.',
+      'Lie on your back, knees bent, feet flat.',
+      'Curl your ribs toward your hips — don\'t yank on your neck.',
+      'Lower back stays pinned to the floor the entire time.',
+      'Exhale at the top, inhale on the way down.',
     ],
     defaults: { sets: 3, reps: 15, weight: 0 },
-    view: 'side',
+    tempo: 1.6,
     rig: (t) => {
       const phase = wave(t);
-      const spine = lerp(0.05, PI * 0.35, phase);
+      const spine = lerp(0.02, PI * 0.32, phase);
       return pose({
-        lying: true,
+        lyingFloor: true,
         spine,
-        lShoulder: -PI * 0.4,
-        rShoulder: -PI * 0.4,
-        lElbow: PI * 0.7,
-        rElbow: PI * 0.7,
-        lHip: PI * 0.5,
-        rHip: PI * 0.5,
-        lKnee: PI * 0.5,
-        rKnee: PI * 0.5,
+        // Hands behind head: shoulder rotated up, elbow bent.
+        lShoulder: -PI * 0.55, rShoulder: -PI * 0.55,
+        lShoulderAbduct: 0.5, rShoulderAbduct: 0.5,
+        lElbow: PI * 0.75, rElbow: PI * 0.75,
+        // Knees bent, feet flat (same logic as bench-press legs).
+        lHip: PI / 2, rHip: PI / 2,
+        lKnee: PI * 0.55, rKnee: PI * 0.55,
       });
     },
+    camera: { view: 'side', position: [3.2, 1.0, 0], target: [0, 0.4, 0] },
   },
   {
     id: 'russian-twist',
@@ -376,29 +440,31 @@ export const EXERCISES = [
     category: 'core',
     primary: ['Obliques', 'Abs'],
     cues: [
-      'Lean back ~45°, feet hover.',
-      'Rotate from the torso, not the arms.',
+      'Sit, lean back ~45°, brace the core.',
+      'Heels lifted (advanced) or planted (regular).',
+      'Rotate from the torso — keep arms close to your body.',
+      'Tap the plate to each side, controlled, no momentum.',
     ],
     defaults: { sets: 3, reps: 20, weight: 10 },
-    view: 'front',
+    tempo: 2.2,
     rig: (t) => {
-      const swing = Math.sin(2 * PI * t) * 0.6;
+      // Continuous swing side-to-side rather than ping-pong (prevents pause).
+      const swing = Math.sin(2 * PI * t) * 0.65;
       return pose({
-        seated: true,
-        spine: PI * 0.35,
+        seatedFloor: true,
+        spine: PI * 0.32, // 45° backward lean (negated by environment)
         rootRotY: swing,
-        lShoulder: -PI * 0.35,
-        rShoulder: -PI * 0.35,
-        lShoulderAbduct: 0.05,
-        rShoulderAbduct: 0.05,
-        lElbow: PI * 0.6,
-        rElbow: PI * 0.6,
-        lHip: PI * 0.55,
-        rHip: PI * 0.55,
-        lKnee: PI * 0.55,
-        rKnee: PI * 0.55,
+        // Arms holding plate at chest; mostly fixed.
+        lShoulder: -PI * 0.32, rShoulder: -PI * 0.32,
+        lShoulderAbduct: 0.05, rShoulderAbduct: 0.05,
+        lElbow: PI * 0.65, rElbow: PI * 0.65,
+        // Hips bent, knees bent (V-sit).
+        lHip: PI * 0.55, rHip: PI * 0.55,
+        lKnee: PI * 0.55, rKnee: PI * 0.55,
+        plate: true,
       });
     },
+    camera: { view: 'front', position: [0.4, 1.2, 3.0], target: [0, 0.7, 0] },
   },
   {
     id: 'hanging-leg-raise',
@@ -406,32 +472,34 @@ export const EXERCISES = [
     category: 'core',
     primary: ['Lower Abs', 'Hip Flexors'],
     cues: [
-      'Dead hang, no swinging.',
-      'Lift legs to 90° (or higher), control the descent.',
+      'Dead hang from the bar, shoulders packed, no swinging.',
+      'Tilt pelvis up first — don\'t just lift the legs.',
+      'Raise to at least 90°; stop swinging by pausing at the top.',
+      'Lower under control over 2–3 seconds.',
     ],
     defaults: { sets: 3, reps: 10, weight: 0 },
-    view: 'side',
+    tempo: 2.6,
     rig: (t) => {
       const phase = wave(t);
       const hip = lerp(0, PI * 0.55, phase);
+      const knee = lerp(0.05, PI * 0.15, phase);
+      // Body hangs from bar at y=2.5: shoulder.y = root.y + 1.95, hand.y = shoulder.y + 1.05.
+      // For hand.y = 2.5 ⇒ root.y = -0.5.
       return pose({
         hanging: true,
-        lShoulder: -PI,
-        rShoulder: -PI,
-        lShoulderAbduct: 0.15,
-        rShoulderAbduct: 0.15,
-        lElbow: PI * 0.05,
-        rElbow: PI * 0.05,
-        lHip: hip,
-        rHip: hip,
-        lKnee: lerp(0, PI * 0.2, phase),
-        rKnee: lerp(0, PI * 0.2, phase),
+        rootY: -0.5,
+        lShoulder: -PI, rShoulder: -PI,
+        lShoulderAbduct: 0.15, rShoulderAbduct: 0.15,
+        lElbow: 0.04, rElbow: 0.04,
+        lHip: hip, rHip: hip,
+        lKnee: knee, rKnee: knee,
       });
     },
+    camera: { view: 'side', position: [3.6, 1.7, 0.6], target: [0, 1.3, 0] },
   },
 ];
 
-// Curated split for 4-5x/week, upper body + core focus, biased toward bench progression.
+// 4–5 day split biased toward bench progression and balanced pulling.
 export const SPLIT = [
   {
     id: 'day-1',
@@ -469,9 +537,7 @@ export function getExercise(id) {
   return EXERCISES.find((e) => e.id === id);
 }
 
-// Heuristic: which split day to suggest "today" based on day-of-week.
 export function suggestedDay(date = new Date()) {
-  // Mon=1..Sun=0 -> map to indexes in SPLIT
   const map = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 0, 0: 1 };
   return SPLIT[map[date.getDay()]];
 }

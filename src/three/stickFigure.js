@@ -1,19 +1,24 @@
 import * as THREE from 'three';
 
-// A reusable three.js stick figure. Build a skeleton, then call setPose(pose).
-// Pose fields are radians. See data/exercises.js for the rig convention.
+// Stick figure with attached equipment props.
 //
 // Coordinate convention:
 //   +Y up, figure faces +Z (camera side). Limbs hang along -Y at neutral.
 //   Shoulder/hip "forward raise" rotates around +X.
 //   Shoulder/hip "abduction" rotates around -Z (left arm) / +Z (right arm).
-//   Elbow/knee bend rotates around +X (positive = bent).
+//   Elbow/knee bend rotates around +X (positive = bent toward chest/face).
+//
+// After setPose() + applyEnvironment(), call updateProps() to position
+// equipment that follows the hands (barbell, dumbbells, cable lines).
 
 const C_BONE = 0xeef1f7;
 const C_JOINT = 0x7cf2c8;
 const C_ACCENT = 0x62a8ff;
 const C_BENCH = 0x232734;
 const C_FLOOR = 0x141822;
+const C_METAL = 0xc8cdd9;
+const C_PLATE = 0x1a1d27;
+const C_CABLE = 0x6b7283;
 
 function bone(length, radius = 0.045, color = C_BONE) {
   const geom = new THREE.CylinderGeometry(radius, radius, length, 12);
@@ -22,18 +27,89 @@ function bone(length, radius = 0.045, color = C_BONE) {
   return new THREE.Mesh(geom, mat);
 }
 
-function joint(radius = 0.07, color = C_JOINT) {
-  const m = new THREE.Mesh(
+function joint(radius = 0.07, color = C_JOINT, emissive = true) {
+  return new THREE.Mesh(
     new THREE.SphereGeometry(radius, 16, 12),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.1, emissive: color, emissiveIntensity: 0.18 }),
+    new THREE.MeshStandardMaterial({
+      color, roughness: 0.4, metalness: 0.1,
+      emissive: emissive ? color : 0x000000,
+      emissiveIntensity: emissive ? 0.18 : 0,
+    }),
   );
-  return m;
 }
+
+// ---------------------------------------------------------------------------
+// Equipment props
+// ---------------------------------------------------------------------------
+
+function makeBarbell(length = 1.7) {
+  const g = new THREE.Group();
+  g.name = 'barbell';
+
+  const barMat = new THREE.MeshStandardMaterial({ color: C_METAL, roughness: 0.35, metalness: 0.75 });
+  const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, length, 16), barMat);
+  bar.rotation.z = Math.PI / 2;
+  g.add(bar);
+
+  // Sleeves (slightly thicker, where plates sit)
+  const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x8d95a3, roughness: 0.45, metalness: 0.7 });
+  for (const sx of [-1, 1]) {
+    const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.34, 12), sleeveMat);
+    sleeve.rotation.z = Math.PI / 2;
+    sleeve.position.x = sx * (length / 2 - 0.18);
+    g.add(sleeve);
+  }
+
+  // Plates — pair of large + small per side
+  const plateMat = new THREE.MeshStandardMaterial({ color: C_PLATE, roughness: 0.7 });
+  for (const sx of [-1, 1]) {
+    const big = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.05, 28), plateMat);
+    big.rotation.z = Math.PI / 2;
+    big.position.x = sx * (length / 2 - 0.06);
+    g.add(big);
+    const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.04, 24), plateMat);
+    mid.rotation.z = Math.PI / 2;
+    mid.position.x = sx * (length / 2 - 0.13);
+    g.add(mid);
+  }
+  return g;
+}
+
+function makeDumbbell() {
+  const g = new THREE.Group();
+  g.name = 'dumbbell';
+  const handle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.022, 0.022, 0.16, 12),
+    new THREE.MeshStandardMaterial({ color: C_METAL, roughness: 0.4, metalness: 0.7 }),
+  );
+  handle.rotation.z = Math.PI / 2;
+  g.add(handle);
+  const headMat = new THREE.MeshStandardMaterial({ color: C_PLATE, roughness: 0.7 });
+  for (const sx of [-1, 1]) {
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.085, 16, 10), headMat);
+    head.position.x = sx * 0.12;
+    head.scale.set(0.55, 1, 1);
+    g.add(head);
+  }
+  return g;
+}
+
+function makeCableLine() {
+  const mat = new THREE.LineBasicMaterial({ color: C_CABLE, linewidth: 2 });
+  const geom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 1, 0),
+  ]);
+  return new THREE.Line(geom, mat);
+}
+
+// ---------------------------------------------------------------------------
+// Skeleton
+// ---------------------------------------------------------------------------
 
 export function buildSkeleton() {
   const root = new THREE.Group();
 
-  // Lengths (in meters-ish).
   const L = {
     upperArm: 0.55,
     forearm: 0.5,
@@ -46,26 +122,21 @@ export function buildSkeleton() {
   };
   root.userData.lengths = L;
 
-  // Hips group
   const hips = new THREE.Group();
   hips.position.y = L.calf + L.thigh;
   root.add(hips);
 
-  // Spine pivot at hips, torso extends upward
   const spine = new THREE.Group();
   hips.add(spine);
 
-  // Torso bone (drawn from spine pivot upward — flip the bone)
   const torsoBone = bone(L.torso, 0.06);
-  torsoBone.rotation.z = Math.PI; // point upward
+  torsoBone.rotation.z = Math.PI;
   spine.add(torsoBone);
 
-  // Shoulders pivot at top of torso
   const chest = new THREE.Group();
   chest.position.y = L.torso;
   spine.add(chest);
 
-  // Neck + head
   const neck = new THREE.Group();
   chest.add(neck);
   const neckBone = bone(L.neck, 0.04);
@@ -78,7 +149,6 @@ export function buildSkeleton() {
   head.position.y = L.neck + 0.13;
   neck.add(head);
 
-  // Shoulders
   const lShoulderJoint = joint(0.07);
   lShoulderJoint.position.set(L.shoulderHalf, 0, 0);
   chest.add(lShoulderJoint);
@@ -86,32 +156,38 @@ export function buildSkeleton() {
   rShoulderJoint.position.set(-L.shoulderHalf, 0, 0);
   chest.add(rShoulderJoint);
 
-  // Arms
-  function buildArm(parent, side /* +1 = left, -1 = right */) {
-    const shoulderAbduct = new THREE.Group(); // rotate Z (abduct out to side)
+  function buildArm(parent) {
+    const shoulderAbduct = new THREE.Group();
     parent.add(shoulderAbduct);
-    const shoulderForward = new THREE.Group(); // rotate X (forward raise)
+    const shoulderForward = new THREE.Group();
     shoulderAbduct.add(shoulderForward);
     const upper = bone(L.upperArm);
     shoulderForward.add(upper);
     const elbow = new THREE.Group();
     elbow.position.y = -L.upperArm;
     shoulderForward.add(elbow);
-    const elbowJoint = joint(0.05);
-    elbow.add(elbowJoint);
+    elbow.add(joint(0.05));
     const elbowBend = new THREE.Group();
     elbow.add(elbowBend);
     const fore = bone(L.forearm);
     elbowBend.add(fore);
-    const hand = joint(0.06, 0xf2f4f9);
+
+    // Hand transform: anchor for grippable equipment.
+    const hand = new THREE.Group();
     hand.position.y = -L.forearm;
     elbowBend.add(hand);
-    return { shoulderAbduct, shoulderForward, elbowBend, side };
-  }
-  const lArm = buildArm(lShoulderJoint, +1);
-  const rArm = buildArm(rShoulderJoint, -1);
+    hand.add(joint(0.06, 0xf2f4f9, false));
 
-  // Hips/legs
+    // Per-hand props (start hidden)
+    const dumbbell = makeDumbbell();
+    dumbbell.visible = false;
+    hand.add(dumbbell);
+
+    return { shoulderAbduct, shoulderForward, elbowBend, hand, dumbbell };
+  }
+  const lArm = buildArm(lShoulderJoint);
+  const rArm = buildArm(rShoulderJoint);
+
   const lHipJoint = joint(0.07);
   lHipJoint.position.set(L.hipHalf, 0, 0);
   hips.add(lHipJoint);
@@ -119,47 +195,42 @@ export function buildSkeleton() {
   rHipJoint.position.set(-L.hipHalf, 0, 0);
   hips.add(rHipJoint);
 
-  function buildLeg(parent, side) {
-    const hipForward = new THREE.Group(); // rotate X (forward raise)
+  function buildLeg(parent) {
+    const hipForward = new THREE.Group();
     parent.add(hipForward);
     const thigh = bone(L.thigh);
     hipForward.add(thigh);
     const knee = new THREE.Group();
     knee.position.y = -L.thigh;
     hipForward.add(knee);
-    const kneeJoint = joint(0.05);
-    knee.add(kneeJoint);
+    knee.add(joint(0.05));
     const kneeBend = new THREE.Group();
     knee.add(kneeBend);
     const calf = bone(L.calf);
     kneeBend.add(calf);
-    const foot = joint(0.06, 0xf2f4f9);
+    const foot = joint(0.06, 0xf2f4f9, false);
     foot.position.y = -L.calf;
     kneeBend.add(foot);
-    return { hipForward, kneeBend, side };
+    return { hipForward, kneeBend };
   }
-  const lLeg = buildLeg(lHipJoint, +1);
-  const rLeg = buildLeg(rHipJoint, -1);
+  const lLeg = buildLeg(lHipJoint);
+  const rLeg = buildLeg(rHipJoint);
 
-  // Hip joint visual
-  const hipCenter = joint(0.075, C_ACCENT);
-  hips.add(hipCenter);
+  hips.add(joint(0.075, C_ACCENT));
 
-  return {
-    root, hips, spine, chest, neck,
-    lArm, rArm, lLeg, rLeg, lengths: L,
-  };
+  return { root, hips, spine, chest, neck, lArm, rArm, lLeg, rLeg, lengths: L };
 }
+
+// ---------------------------------------------------------------------------
+// Pose application
+// ---------------------------------------------------------------------------
 
 export function setPose(skel, p) {
   const { spine, neck, lArm, rArm, lLeg, rLeg } = skel;
 
-  // Spine forward bend (around X)
   spine.rotation.set(p.spine || 0, 0, 0);
-  // Neck partly counters spine bend so head stays roughly upright.
   neck.rotation.set(-(p.spine || 0) * 0.4 + (p.neck || 0), 0, 0);
 
-  // Arms — abduct around Z (sign depends on side), forward raise around X
   lArm.shoulderAbduct.rotation.set(0, 0, -(p.lShoulderAbduct || 0));
   lArm.shoulderForward.rotation.set(p.lShoulder || 0, 0, 0);
   lArm.elbowBend.rotation.set(p.lElbow || 0, 0, 0);
@@ -168,128 +239,227 @@ export function setPose(skel, p) {
   rArm.shoulderForward.rotation.set(p.rShoulder || 0, 0, 0);
   rArm.elbowBend.rotation.set(p.rElbow || 0, 0, 0);
 
-  // Legs
   lLeg.hipForward.rotation.set(p.lHip || 0, 0, 0);
   lLeg.kneeBend.rotation.set(-(p.lKnee || 0), 0, 0);
   rLeg.hipForward.rotation.set(p.rHip || 0, 0, 0);
   rLeg.kneeBend.rotation.set(-(p.rKnee || 0), 0, 0);
-  // Root pose (rotation/position) is fully owned by applyEnvironment().
 }
 
-// Apply environment pose hints (lying/plank/seated/etc.) by rotating the root.
-// Returns extra props the renderer needs (e.g. show bench/floor).
 export function applyEnvironment(skel, p) {
-  const env = { bench: false, floor: true, hangBar: false, dipBar: false, incline: 0 };
+  const env = {
+    flatBench: false, inclineBench: false, inclineAngle: 0,
+    hangBar: false, dipBars: false, latStation: false, cableColumn: false,
+    floorMat: false, hideFloor: false,
+  };
 
-  // Reset
   skel.root.position.set(0, 0, 0);
   skel.root.rotation.set(0, p.rootRotY || 0, 0);
 
   if (p.lying) {
-    // Face up on a bench. -π/2 around X makes head point -Z.
-    // Shift +Z so torso lies centered on bench (which is centered at z=0).
+    // Supine on bench: head toward -Z, body horizontal.
     skel.root.rotation.x = -Math.PI / 2;
-    skel.root.position.set(0, 0.6, 0.7);
-    env.bench = true;
+    skel.root.position.set(0, 0.55, 1.0);
+    env.flatBench = true;
+  } else if (p.lyingFloor) {
+    skel.root.rotation.x = -Math.PI / 2;
+    skel.root.position.set(0, 0.13, 0.6);
+    env.floorMat = true;
   } else if (p.plank) {
-    // Face down. +π/2 around X.
+    // Prone (face down). Rig fully controls body height via rootY.
     skel.root.rotation.x = Math.PI / 2;
-    skel.root.position.set(0, p.forearm ? 0.32 : 0.55, 0.6);
+    skel.root.position.set(0, 0, 0.4);
+    env.floorMat = true;
   } else if (p.incline) {
-    const ang = -Math.PI / 4;
+    const ang = -Math.PI / 4.5;
     skel.root.rotation.x = ang;
-    skel.root.position.set(0, 0.55, 0.5);
-    env.bench = true;
-    env.incline = ang;
+    skel.root.position.set(0, 0.55, 0.4);
+    env.inclineBench = true;
+    env.inclineAngle = ang;
   } else if (p.hanging) {
-    skel.root.position.set(0, 0.55, 0);
+    // Rig fully controls body height via rootY (negative = hanging below bar).
+    skel.root.position.set(0, 0, 0);
     env.hangBar = true;
+    env.hideFloor = true;
   } else if (p.suspended) {
-    skel.root.position.set(0, 0.65, 0);
-    env.dipBar = true;
-  } else if (p.seated) {
+    // Rig fully controls body height via rootY.
+    skel.root.position.set(0, 0, 0);
+    env.dipBars = true;
+    env.hideFloor = true;
+  } else if (p.latSeated) {
+    skel.root.position.set(0, 0.4, 0.3);
+    env.latStation = true;
+  } else if (p.seatedFloor) {
     skel.root.position.set(0, 0.05, 0);
-    env.bench = true;
+    skel.root.rotation.x = -(p.spine || 0);
+    env.floorMat = true;
+  } else if (p.cableStanding) {
+    skel.root.position.set(0, 0, 0);
+    env.cableColumn = true;
   }
 
-  // Apply per-frame rootY offset on top
   skel.root.position.y += (p.rootY || 0);
-
   return env;
 }
+
+// ---------------------------------------------------------------------------
+// Static environment (built once per scene)
+// ---------------------------------------------------------------------------
 
 export function buildEnvironment(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  // Soft floor
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(3.2, 48),
-    new THREE.MeshStandardMaterial({ color: C_FLOOR, roughness: 0.95, metalness: 0 }),
+    new THREE.CircleGeometry(3.4, 56),
+    new THREE.MeshStandardMaterial({ color: C_FLOOR, roughness: 0.95 }),
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0;
   group.add(floor);
 
-  // Bench (toggled visible)
-  const bench = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.08, 1.6),
-    new THREE.MeshStandardMaterial({ color: C_BENCH, roughness: 0.7 }),
+  // Floor mat (rectangular)
+  const mat = new THREE.Mesh(
+    new THREE.BoxGeometry(1.4, 0.04, 2.4),
+    new THREE.MeshStandardMaterial({ color: 0x191d27, roughness: 0.85 }),
   );
-  bench.position.y = 0.5;
-  bench.visible = false;
-  group.add(bench);
+  mat.position.y = 0.02;
+  mat.visible = false;
+  group.add(mat);
 
-  // Bench legs
-  const benchLegMat = new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.8 });
-  const benchLegA = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.08), benchLegMat);
-  benchLegA.position.set(0, 0.25, 0.7);
-  benchLegA.visible = false;
-  group.add(benchLegA);
-  const benchLegB = benchLegA.clone();
-  benchLegB.position.z = -0.7;
-  group.add(benchLegB);
+  // Flat bench
+  const benchMat = new THREE.MeshStandardMaterial({ color: C_BENCH, roughness: 0.7 });
+  const flatBench = new THREE.Group();
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 1.6), benchMat);
+  pad.position.y = 0.5;
+  flatBench.add(pad);
+  for (const z of [0.65, -0.65]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.45, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.8 }));
+    leg.position.set(0, 0.225, z);
+    flatBench.add(leg);
+  }
+  // Uprights for the bar (at "head" end, z = -0.85)
+  const uprightMat = new THREE.MeshStandardMaterial({ color: 0x3a4150, roughness: 0.7, metalness: 0.3 });
+  for (const sx of [0.3, -0.3]) {
+    const upright = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.0, 12), uprightMat);
+    upright.position.set(sx, 0.5, -0.85);
+    flatBench.add(upright);
+    const hook = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 8, 16, Math.PI), uprightMat);
+    hook.rotation.z = Math.PI / 2;
+    hook.position.set(sx, 1.0, -0.85);
+    flatBench.add(hook);
+  }
+  flatBench.visible = false;
+  group.add(flatBench);
 
-  // Pull-up bar
-  const bar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 1.6, 12),
-    new THREE.MeshStandardMaterial({ color: 0x9aa3b3, roughness: 0.4, metalness: 0.6 }),
-  );
-  bar.rotation.z = Math.PI / 2;
-  bar.position.y = 2.4;
-  bar.visible = false;
-  group.add(bar);
+  // Adjustable incline bench (seat + angled backrest)
+  const inclineBench = new THREE.Group();
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.55), benchMat);
+  seat.position.set(0, 0.45, 0.55);
+  inclineBench.add(seat);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 1.1), benchMat);
+  // Angle is set in applyEnvVisibility based on env.inclineAngle.
+  inclineBench.add(back);
+  inclineBench.userData.back = back;
+  for (const z of [0.7, -0.4]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.45, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.8 }));
+    leg.position.set(0, 0.225, z);
+    inclineBench.add(leg);
+  }
+  inclineBench.visible = false;
+  group.add(inclineBench);
 
-  // Dip bars (two parallels)
-  const dipL = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.035, 0.035, 1.0, 10),
-    new THREE.MeshStandardMaterial({ color: 0x9aa3b3, roughness: 0.4, metalness: 0.6 }),
-  );
-  dipL.rotation.x = Math.PI / 2;
-  dipL.position.set(0.32, 1.05, 0);
-  dipL.visible = false;
-  group.add(dipL);
-  const dipR = dipL.clone();
-  dipR.position.x = -0.32;
-  group.add(dipR);
+  // Pull-up bar (high horizontal bar with two posts)
+  const hangBar = new THREE.Group();
+  const barMat = new THREE.MeshStandardMaterial({ color: 0x9aa3b3, roughness: 0.4, metalness: 0.6 });
+  const hangBarRod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.7, 14), barMat);
+  hangBarRod.rotation.z = Math.PI / 2;
+  hangBarRod.position.y = 2.5;
+  hangBar.add(hangBarRod);
+  for (const sx of [-0.85, 0.85]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 12), barMat);
+    post.position.set(sx, 1.25, 0);
+    hangBar.add(post);
+  }
+  hangBar.visible = false;
+  group.add(hangBar);
 
-  return { group, bench, benchLegA, benchLegB, bar, dipL, dipR, floor };
+  // Dip station: two parallel bars with vertical posts
+  const dipBars = new THREE.Group();
+  for (const sx of [0.35, -0.35]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 12), barMat);
+    rod.rotation.x = Math.PI / 2;
+    rod.position.set(sx, 1.25, 0);
+    dipBars.add(rod);
+    for (const z of [0.4, -0.4]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.25, 12), barMat);
+      post.position.set(sx, 0.625, z);
+      dipBars.add(post);
+    }
+  }
+  dipBars.visible = false;
+  group.add(dipBars);
+
+  // Lat pulldown station (cable column with high pulley + seat with thigh pad)
+  const latStation = new THREE.Group();
+  const column = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.6, 0.18),
+    new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.7 }));
+  column.position.set(0, 1.3, -0.6);
+  latStation.add(column);
+  const pulleyHousing = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.22),
+    new THREE.MeshStandardMaterial({ color: 0x3a4150, roughness: 0.6 }));
+  pulleyHousing.position.set(0, 2.55, -0.5);
+  latStation.add(pulleyHousing);
+  // Lat seat
+  const latSeat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.45), benchMat);
+  latSeat.position.set(0, 0.45, 0.05);
+  latStation.add(latSeat);
+  // Thigh pad
+  const thighPad = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.16), benchMat);
+  thighPad.position.set(0, 0.78, 0.45);
+  latStation.add(thighPad);
+  // Wide grip lat bar (the equipment users actually hold)
+  const latBar = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 1.1, 14), barMat);
+  latBar.rotation.z = Math.PI / 2;
+  latBar.userData.label = 'latBar';
+  latStation.add(latBar);
+  latStation.userData.latBar = latBar;
+  latStation.visible = false;
+  group.add(latStation);
+
+  // Cable column (for triceps pushdown / cable rows) — single tall column with high pulley
+  const cableColumn = new THREE.Group();
+  const ccCol = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.6, 0.18),
+    new THREE.MeshStandardMaterial({ color: 0x2a2f3d, roughness: 0.7 }));
+  ccCol.position.set(0, 1.3, -0.6);
+  cableColumn.add(ccCol);
+  const ccHousing = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.22),
+    new THREE.MeshStandardMaterial({ color: 0x3a4150, roughness: 0.6 }));
+  ccHousing.position.set(0, 2.55, -0.5);
+  cableColumn.add(ccHousing);
+  cableColumn.visible = false;
+  group.add(cableColumn);
+
+  return {
+    group, floor, mat, flatBench, inclineBench, hangBar, dipBars, latStation, cableColumn,
+  };
 }
 
 export function applyEnvVisibility(env, hints) {
-  env.bench.visible = !!hints.bench;
-  env.benchLegA.visible = !!hints.bench;
-  env.benchLegB.visible = !!hints.bench;
-  env.bar.visible = !!hints.hangBar;
-  env.dipL.visible = !!hints.dipBar;
-  env.dipR.visible = !!hints.dipBar;
+  env.mat.visible = !!hints.floorMat;
+  env.flatBench.visible = !!hints.flatBench;
+  env.inclineBench.visible = !!hints.inclineBench;
+  env.hangBar.visible = !!hints.hangBar;
+  env.dipBars.visible = !!hints.dipBars;
+  env.latStation.visible = !!hints.latStation;
+  env.cableColumn.visible = !!hints.cableColumn;
+  env.floor.visible = !hints.hideFloor;
 
-  // Tilt bench for incline
-  if (hints.incline) {
-    env.bench.rotation.x = hints.incline;
-    env.bench.position.y = 0.55;
-  } else {
-    env.bench.rotation.x = 0;
-    env.bench.position.y = 0.5;
+  if (hints.inclineBench) {
+    const ang = hints.inclineAngle || -Math.PI / 4.5;
+    const back = env.inclineBench.userData.back;
+    back.rotation.x = ang;
+    // Position the backrest so its bottom edge meets the seat at z ≈ 0.3
+    back.position.set(0, 0.55 + Math.cos(-ang) * 0.5, 0.3 - Math.sin(-ang) * 0.5);
   }
 }

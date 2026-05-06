@@ -1,7 +1,12 @@
 import * as THREE from 'three';
-import { buildSkeleton, setPose, applyEnvironment, buildEnvironment, applyEnvVisibility } from './stickFigure.js';
+import {
+  buildSkeleton, setPose, applyEnvironment, buildEnvironment, applyEnvVisibility,
+} from './stickFigure.js';
+import { buildProps, updateProps } from './props.js';
 
 const activeStages = new Set();
+
+const _camTarget = new THREE.Vector3();
 
 export class Stage {
   constructor(canvas, { exercise, speed = 1.0, autoRotate = true } = {}) {
@@ -15,18 +20,14 @@ export class Stage {
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
-    renderer.shadowMap.enabled = false;
     this.renderer = renderer;
 
     const scene = new THREE.Scene();
     this.scene = scene;
 
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
-    camera.position.set(2.6, 1.6, 3.4);
-    camera.lookAt(0, 1.1, 0);
     this.camera = camera;
 
-    // Lights
     const hemi = new THREE.HemisphereLight(0xeaf2ff, 0x0e1320, 0.55);
     scene.add(hemi);
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -36,10 +37,10 @@ export class Stage {
     rim.position.set(-3, 2, -2);
     scene.add(rim);
 
-    // Skeleton + environment
     this.skel = buildSkeleton();
     scene.add(this.skel.root);
     this.env = buildEnvironment(scene);
+    this.props = buildProps(scene);
 
     this.frame();
     this.observer = new ResizeObserver(() => this.frame());
@@ -62,22 +63,35 @@ export class Stage {
     this.camera.updateProjectionMatrix();
   }
 
-  cameraFor(exercise) {
-    const view = exercise?.view || 'front';
-    if (view === 'side') {
-      this.camera.position.set(3.2, 1.5, 0.6);
-      this.camera.lookAt(0, 1.0, 0);
+  cameraFor(exercise, elapsed) {
+    const cam = exercise?.camera || { view: 'front' };
+    const target = cam.target || [0, 1.1, 0];
+    _camTarget.set(target[0], target[1], target[2]);
+
+    let pos;
+    if (cam.position) {
+      pos = cam.position;
+    } else if (cam.view === 'side') {
+      pos = [3.4, 1.4, 0.6];
+    } else if (cam.view === '3q') {
+      pos = [2.4, 1.55, 2.6];
     } else {
-      this.camera.position.set(0.6, 1.6, 3.4);
-      this.camera.lookAt(0, 1.1, 0);
+      pos = [0.4, 1.55, 3.6];
     }
+    this.camera.position.set(pos[0], pos[1], pos[2]);
+
+    if (this.autoRotate && cam.view === 'front') {
+      const orbit = Math.sin(elapsed * 0.3) * 0.3;
+      this.camera.position.x += orbit;
+    }
+    this.camera.lookAt(_camTarget);
   }
 
   loop = () => {
     if (this.disposed) return;
     const now = performance.now();
     const elapsed = (now - this.t0) / 1000;
-    const periodSec = 2.4 / this.speed;
+    const periodSec = (this.exercise?.tempo || 2.4) / this.speed;
     const t = (elapsed % periodSec) / periodSec;
 
     const ex = this.exercise;
@@ -86,13 +100,8 @@ export class Stage {
       const env = applyEnvironment(this.skel, p);
       applyEnvVisibility(this.env, env);
       setPose(this.skel, p);
-      this.cameraFor(ex);
-      // Slow auto-orbit on front-view exercises for a touch of life.
-      if (this.autoRotate && (ex.view || 'front') === 'front') {
-        const orbit = Math.sin(elapsed * 0.3) * 0.25;
-        this.camera.position.x = 0.6 + orbit;
-        this.camera.lookAt(0, 1.1, 0);
-      }
+      updateProps(this.props, this.skel, p, this.env);
+      this.cameraFor(ex, elapsed);
     }
 
     this.renderer.render(this.scene, this.camera);
