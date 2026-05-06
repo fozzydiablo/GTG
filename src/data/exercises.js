@@ -318,7 +318,7 @@ export const EXERCISES = [
         latBar: true,
       });
     },
-    camera: { view: 'front', position: [0.2, 1.6, 3.4], target: [0, 1.4, 0] },
+    camera: { view: 'front', position: [0.2, 2.1, 4.0], target: [0, 1.7, 0] },
   },
   {
     id: 'bicep-curl',
