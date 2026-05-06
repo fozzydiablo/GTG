@@ -29,7 +29,7 @@ export default defineConfig({
         ],
       },
       manifest: {
-        name: 'GTG — Get To Gym',
+        name: 'GTG — Go To Gym',
         short_name: 'GTG',
         description: 'Sleek workout tracker with stick-figure exercise animations. Built for upper-body strength and benching 135.',
         theme_color: '#0b0d12',
