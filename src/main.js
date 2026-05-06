@@ -1,5 +1,8 @@
 import './style.css';
-import { EXERCISES, SPLIT, getExercise, suggestedDay } from './data/exercises.js';
+import {
+  EXERCISES, SPLIT, MUSCLE_GROUPS,
+  getExercise, suggestedDay, exercisesForMuscle,
+} from './data/exercises.js';
 import { Stage, disposeAllStages } from './three/stage.js';
 import {
   getSessions, getOrCreateTodaySession, getEntry, updateEntry,
@@ -251,20 +254,27 @@ function buildLogger(root, session, exercise) {
   root.appendChild(el('div', { class: 'stage-meta' }, prevText));
 }
 
-// ---------- EXERCISES ----------
+// ---------- EXERCISES (grouped by muscle) ----------
 function renderExercises(root, filter) {
-  const cats = ['all', 'push', 'pull', 'core'];
-  const active = cats.includes(filter) ? filter : 'all';
-  const bar = el('div', { class: 'filter-bar' },
-    ...cats.map((c) => el('button', {
-      class: 'chip' + (c === active ? ' active' : ''),
-      onClick: () => go('exercises', c),
-    }, c[0].toUpperCase() + c.slice(1))),
-  );
-  const grid = el('div', { class: 'exercise-grid' });
-  const filtered = active === 'all' ? EXERCISES : EXERCISES.filter((e) => e.category === active);
-  for (const ex of filtered) {
+  const validKeys = MUSCLE_GROUPS.map((g) => g.key);
+  const active = validKeys.includes(filter) ? filter : 'all';
+
+  // Per-render observer: only mounts a Stage when its tile scrolls near
+  // the viewport, so opening "All" doesn't spin up 25 WebGL contexts at once.
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const canvas = entry.target;
+      if (canvas.dataset.mounted) continue;
+      canvas.dataset.mounted = '1';
+      new Stage(canvas, { exercise: getExercise(canvas.dataset.exerciseId), autoRotate: false, speed: 1.0 });
+      observer.unobserve(canvas);
+    }
+  }, { rootMargin: '160px 0px' });
+
+  const makeTile = (ex) => {
     const canvas = el('canvas');
+    canvas.dataset.exerciseId = ex.id;
     const tile = el('div', {
       class: 'exercise-tile',
       onClick: () => go('today', ex.id),
@@ -273,12 +283,45 @@ function renderExercises(root, filter) {
       el('div', { class: 'name' }, ex.name),
       el('div', { class: 'muscles' }, ex.primary.join(' · ')),
     );
-    grid.appendChild(tile);
-    queueMicrotask(() => new Stage(canvas, { exercise: ex, autoRotate: false, speed: 1.0 }));
-  }
+    queueMicrotask(() => observer.observe(canvas));
+    return tile;
+  };
+
+  const bar = el('div', { class: 'filter-bar' },
+    el('button', {
+      class: 'chip' + (active === 'all' ? ' active' : ''),
+      onClick: () => go('exercises', 'all'),
+    }, 'All', el('span', { class: 'chip-count' }, String(EXERCISES.length))),
+    ...MUSCLE_GROUPS.map((g) => {
+      const count = exercisesForMuscle(g.key).length;
+      return el('button', {
+        class: 'chip' + (active === g.key ? ' active' : ''),
+        onClick: () => go('exercises', g.key),
+      }, g.name, el('span', { class: 'chip-count' }, String(count)));
+    }),
+  );
+
   root.appendChild(el('div', { class: 'section-title' }, 'Exercise Library'));
   root.appendChild(bar);
-  root.appendChild(grid);
+
+  const groupsToShow = active === 'all'
+    ? MUSCLE_GROUPS
+    : MUSCLE_GROUPS.filter((g) => g.key === active);
+
+  for (const group of groupsToShow) {
+    const list = exercisesForMuscle(group.key);
+    if (!list.length) continue;
+    const section = el('section', { class: 'muscle-section' });
+    section.appendChild(el('div', { class: 'muscle-header' },
+      el('h3', { class: 'muscle-name' }, group.name),
+      el('span', { class: 'muscle-count' },
+        `${list.length} ${list.length === 1 ? 'exercise' : 'exercises'}`),
+    ));
+    const grid = el('div', { class: 'exercise-grid' });
+    for (const ex of list) grid.appendChild(makeTile(ex));
+    section.appendChild(grid);
+    root.appendChild(section);
+  }
 }
 
 // ---------- HISTORY ----------

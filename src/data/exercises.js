@@ -541,3 +541,22 @@ export function suggestedDay(date = new Date()) {
   const map = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 0, 0: 1 };
   return SPLIT[map[date.getDay()]];
 }
+
+// Muscle groups, displayed in order. Each group lists the raw `primary`
+// terms that exercises tag themselves with, so an exercise like Bench Press
+// (primary: Chest, Triceps, Front Delts) appears under Chest, Shoulders,
+// and Triceps.
+export const MUSCLE_GROUPS = [
+  { key: 'chest',     name: 'Chest',     terms: ['Chest', 'Upper Chest', 'Lower Chest'] },
+  { key: 'back',      name: 'Back',      terms: ['Lats', 'Mid Back', 'Upper Back'] },
+  { key: 'shoulders', name: 'Shoulders', terms: ['Shoulders', 'Front Delts'] },
+  { key: 'triceps',   name: 'Triceps',   terms: ['Triceps'] },
+  { key: 'biceps',    name: 'Biceps',    terms: ['Biceps'] },
+  { key: 'core',      name: 'Core & Abs', terms: ['Core', 'Abs', 'Obliques', 'Lower Abs', 'Hip Flexors'] },
+];
+
+export function exercisesForMuscle(groupKey) {
+  const group = MUSCLE_GROUPS.find((g) => g.key === groupKey);
+  if (!group) return [];
+  return EXERCISES.filter((ex) => ex.primary.some((m) => group.terms.includes(m)));
+}

@@ -401,6 +401,44 @@ input, select, textarea {
 }
 .filter-bar .chip:hover { color: var(--text); }
 .filter-bar .chip.active { color: var(--accent); border-color: rgba(124, 242, 200, 0.4); }
+.filter-bar .chip-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--bg-1);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.filter-bar .chip.active .chip-count { color: var(--accent); background: rgba(124, 242, 200, 0.08); }
+
+.muscle-section { margin-top: 24px; }
+.muscle-section:first-of-type { margin-top: 12px; }
+.muscle-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.muscle-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.muscle-count {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+}
 
 /* ---------- History ---------- */
 
