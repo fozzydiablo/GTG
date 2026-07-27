@@ -1,12 +1,14 @@
 import './style.css';
 import {
   EXERCISES, SPLIT, MUSCLE_GROUPS,
-  getExercise, suggestedDay, exercisesForMuscle,
+  getExercise, getDay, suggestedDay, exercisesForMuscle,
 } from './data/exercises.js';
 import { Stage, disposeAllStages } from './three/stage.js';
 import {
   getSessions, getOrCreateTodaySession, getEntry, updateEntry,
   deleteEntry, exerciseHistory, epley1RM,
+  getSetting, setSetting, allTimeStats, weeklyVolumes, weekStreak,
+  bestE1RM, categoryVolumes, exportData, importData, isLogged,
 } from './store.js';
 import { initPWA } from './pwa.js';
 
@@ -28,16 +30,20 @@ const el = (tag, props = {}, ...children) => {
   }
   return node;
 };
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const fmt = (n) => Math.round(n).toLocaleString();
 
 // ---------- router ----------
-const ROUTES = ['today', 'exercises', 'history', 'goal'];
+const ROUTES = ['today', 'exercises', 'progress', 'history', 'goal'];
 function getRoute() {
   const h = location.hash.replace(/^#\/?/, '');
   const [route, ...rest] = h.split('/');
   return { route: ROUTES.includes(route) ? route : 'today', params: rest };
 }
 function go(route, ...params) {
-  location.hash = '#/' + [route, ...params].join('/');
+  const target = '#/' + [route, ...params].join('/');
+  if (location.hash === target) render();
+  else location.hash = target;
 }
 
 window.addEventListener('hashchange', render);
@@ -55,19 +61,93 @@ function render() {
   view.innerHTML = '';
   if (route === 'today') renderToday(view, params[0]);
   else if (route === 'exercises') renderExercises(view, params[0]);
+  else if (route === 'progress') renderProgress(view);
   else if (route === 'history') renderHistory(view);
   else if (route === 'goal') renderGoal(view);
 }
 
+// ---------- rest timer ----------
+const restTimer = { box: null, tick: null, endsAt: 0, duration: 90 };
+
+function timerEl() {
+  if (restTimer.box) return restTimer.box;
+  const box = el('div', { class: 'rest-timer', hidden: true },
+    el('div', { class: 'rt-bar' }, el('div', { class: 'rt-fill' })),
+    el('div', { class: 'rt-row' },
+      el('span', { class: 'rt-label' }, 'REST'),
+      el('span', { class: 'rt-time' }, '1:30'),
+      el('button', { class: 'rt-btn', onClick: () => adjustRest(-15) }, '−15'),
+      el('button', { class: 'rt-btn', onClick: () => adjustRest(15) }, '+15'),
+      el('button', { class: 'rt-btn rt-close', onClick: stopRest }, '✕'),
+    ),
+  );
+  document.body.appendChild(box);
+  restTimer.box = box;
+  return box;
+}
+
+function startRest() {
+  const dur = Number(getSetting('restDuration', 90));
+  restTimer.duration = dur;
+  restTimer.endsAt = Date.now() + dur * 1000;
+  const box = timerEl();
+  box.hidden = false;
+  box.classList.remove('done');
+  clearInterval(restTimer.tick);
+  restTimer.tick = setInterval(updateRest, 250);
+  updateRest();
+}
+
+function adjustRest(delta) {
+  restTimer.endsAt += delta * 1000;
+  restTimer.duration = Math.max(15, restTimer.duration + delta);
+  setSetting('restDuration', Math.max(15, Number(getSetting('restDuration', 90)) + delta));
+  updateRest();
+}
+
+function stopRest() {
+  clearInterval(restTimer.tick);
+  if (restTimer.box) restTimer.box.hidden = true;
+}
+
+function updateRest() {
+  const box = timerEl();
+  const left = Math.max(0, restTimer.endsAt - Date.now());
+  const s = Math.ceil(left / 1000);
+  $('.rt-time', box).textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  $('.rt-fill', box).style.width = `${100 * (1 - left / (restTimer.duration * 1000))}%`;
+  if (left <= 0) {
+    clearInterval(restTimer.tick);
+    box.classList.add('done');
+    $('.rt-time', box).textContent = 'GO!';
+    navigator.vibrate?.([120, 60, 120]);
+    setTimeout(() => { box.hidden = true; }, 2500);
+  }
+}
+
+// ---------- transient toast ----------
+function flashToast(text, cls = '') {
+  const t = el('div', { class: `flash-toast ${cls}` }, text);
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 400);
+  }, 2600);
+}
+
 // ---------- TODAY ----------
+function dayForToday() {
+  const pick = localStorage.getItem('gtg.dayPick.' + todayISO());
+  return getDay(pick) || suggestedDay();
+}
+
 function renderToday(root, focusExerciseId) {
-  const day = suggestedDay();
+  const day = dayForToday();
   const session = getOrCreateTodaySession(day.id);
 
-  // Hero exercise
-  const focused = focusExerciseId
-    ? getExercise(focusExerciseId)
-    : getExercise(day.exercises[0]);
+  const focused = (focusExerciseId && getExercise(focusExerciseId))
+    || getExercise(day.exercises[0]);
 
   const heroStageCanvas = el('canvas');
   const heroCard = el('div', { class: 'card stage' }, heroStageCanvas,
@@ -79,15 +159,16 @@ function renderToday(root, focusExerciseId) {
         ),
         el('span', { class: 'pill accent' }, focused.category.toUpperCase()),
       ),
+      el('div', { class: 'bottom' },
+        el('span', { class: 'pill' }, focused.equipment || ''),
+      ),
     ),
   );
 
-  // Exercise info + cues
   const cues = el('div', { class: 'exercise-cues' },
     ...focused.cues.map((c) => el('div', { class: 'cue' }, c)),
   );
 
-  // Logger
   const loggerCard = el('div', { class: 'card logger' });
   buildLogger(loggerCard, session, focused);
 
@@ -101,7 +182,22 @@ function renderToday(root, focusExerciseId) {
 
   const hero = el('div', { class: 'hero' }, heroCard, info);
 
-  // Day plan
+  // Day picker — every suggested workout, today's suggestion marked.
+  const suggested = suggestedDay();
+  const picker = el('div', { class: 'day-picker' },
+    ...SPLIT.map((d) => el('button', {
+      class: 'chip' + (d.id === day.id ? ' active' : ''),
+      onClick: () => {
+        localStorage.setItem('gtg.dayPick.' + todayISO(), d.id);
+        getOrCreateTodaySession(d.id);
+        go('today');
+      },
+    },
+      d.title.split(' — ')[0],
+      d.id === suggested.id ? el('span', { class: 'chip-star', title: 'Suggested for today' }, '★') : null,
+    )),
+  );
+
   const planTitle = el('div', { class: 'row', style: 'justify-content: space-between; align-items: baseline;' },
     el('div', {},
       el('div', { class: 'section-title', style: 'margin: 0' }, day.title),
@@ -113,6 +209,7 @@ function renderToday(root, focusExerciseId) {
   const planGrid = el('div', { class: 'day-plan' });
   for (const exId of day.exercises) {
     const ex = getExercise(exId);
+    if (!ex) continue;
     const miniCanvas = el('canvas');
     const card = el('div', {
       class: 'plan-card' + (ex.id === focused.id ? ' active' : ''),
@@ -127,11 +224,12 @@ function renderToday(root, focusExerciseId) {
     queueMicrotask(() => new Stage(miniCanvas, { exercise: ex, autoRotate: false, speed: 0.9 }));
   }
 
+  root.appendChild(el('div', { class: 'section-title' }, 'Today\'s Workout'));
+  root.appendChild(picker);
   root.appendChild(hero);
   root.appendChild(planTitle);
   root.appendChild(planGrid);
 
-  // Kick off the hero stage after layout
   queueMicrotask(() => new Stage(heroStageCanvas, { exercise: focused, autoRotate: true, speed: 1.0 }));
 }
 
@@ -160,7 +258,6 @@ function buildLogger(root, session, exercise) {
   );
 
   const renderSets = () => {
-    // Remove old set rows
     grid.querySelectorAll('.set-row, .set-row > *').forEach((n) => n.remove());
     entry.sets.forEach((s, i) => {
       const repsInput = el('input', {
@@ -172,7 +269,7 @@ function buildLogger(root, session, exercise) {
         inputmode: 'decimal', placeholder: unit === 'sec' ? '—' : '0',
         disabled: unit === 'sec' ? true : false,
       });
-      const idx = el('div', { class: 'set-row idx' }, String(i + 1));
+      const idx = el('div', { class: 'set-row idx', title: 'Tap to mark done' }, String(i + 1));
       const del = el('button', {
         class: 'set-row delete', title: 'Remove set',
         onClick: () => {
@@ -200,8 +297,11 @@ function buildLogger(root, session, exercise) {
         s.done = !s.done;
         updateEntry(session.id, exercise.id, (e) => { e.sets[i].done = s.done; });
         [idx, repsInput, weightInput, del].forEach((n) => n.classList.toggle('done', s.done));
+        if (s.done) {
+          startRest();
+          maybeCelebratePR(exercise, s, unit);
+        }
       };
-      // Click on the set number to mark done
       idx.style.cursor = 'pointer';
       idx.addEventListener('click', toggleDone);
     });
@@ -211,7 +311,8 @@ function buildLogger(root, session, exercise) {
     el('button', {
       class: 'btn',
       onClick: () => {
-        const last = entry.sets[entry.sets.length - 1] || { reps: exercise.defaults?.reps ?? '', weight: exercise.defaults?.weight ?? '', unit, done: false };
+        const last = entry.sets[entry.sets.length - 1]
+          || { reps: exercise.defaults?.reps ?? '', weight: exercise.defaults?.weight ?? '', unit, done: false };
         const ns = { ...last, done: false };
         entry.sets.push(ns);
         updateEntry(session.id, exercise.id, (e) => e.sets.push(ns));
@@ -226,6 +327,7 @@ function buildLogger(root, session, exercise) {
           updateEntry(session.id, exercise.id, (e) => { e.sets[i].done = true; });
         });
         renderSets();
+        startRest();
       },
     }, '✓ Mark All Done'),
     el('button', {
@@ -233,19 +335,20 @@ function buildLogger(root, session, exercise) {
       onClick: () => {
         if (!confirm('Clear all sets for this exercise today?')) return;
         deleteEntry(session.id, exercise.id);
-        // Re-init fresh
         entry.sets = getEntry(session.id, exercise.id, exercise.defaults).sets;
         renderSets();
       },
     }, 'Clear'),
   );
 
-  // Best previous performance
+  // Previous performance + all-time best
   const history = exerciseHistory(exercise.id);
   const prev = history[history.length - 1];
-  const prevText = prev
-    ? `Last time: ${prev.topWeight}${unit === 'sec' ? 's' : ` ${unit}`} × ${prev.topReps}`
-    : 'No prior history yet — log a set to start tracking.';
+  const best = bestE1RM(exercise.id);
+  const bits = [];
+  if (prev) bits.push(`Last: ${prev.topWeight}${unit === 'sec' ? 's' : ` ${unit}`} × ${prev.topReps}`);
+  if (best.e1 > 0) bits.push(`Best: ${best.weight} ${unit} × ${best.reps} (≈${best.e1} 1RM)`);
+  const prevText = bits.length ? bits.join('  ·  ') : 'No prior history yet — log a set to start tracking.';
 
   root.appendChild(head);
   root.appendChild(grid);
@@ -254,13 +357,23 @@ function buildLogger(root, session, exercise) {
   root.appendChild(el('div', { class: 'stage-meta' }, prevText));
 }
 
+function maybeCelebratePR(exercise, set, unit) {
+  if (unit === 'sec') return;
+  const w = Number(set.weight) || 0;
+  const r = Number(set.reps) || 0;
+  if (!w || !r) return;
+  const e1 = epley1RM(w, r);
+  const prevBest = bestE1RM(exercise.id, todayISO());
+  if (prevBest.e1 > 0 && e1 > prevBest.e1) {
+    flashToast(`🏆 New ${exercise.name} PR — ${w} ${unit} × ${r} (≈${e1} 1RM)`, 'pr');
+  }
+}
+
 // ---------- EXERCISES (grouped by muscle) ----------
 function renderExercises(root, filter) {
   const validKeys = MUSCLE_GROUPS.map((g) => g.key);
   const active = validKeys.includes(filter) ? filter : 'all';
 
-  // Per-render observer: only mounts a Stage when its tile scrolls near
-  // the viewport, so opening "All" doesn't spin up 25 WebGL contexts at once.
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
@@ -282,6 +395,7 @@ function renderExercises(root, filter) {
       el('div', { class: 'stage-mini' }, canvas),
       el('div', { class: 'name' }, ex.name),
       el('div', { class: 'muscles' }, ex.primary.join(' · ')),
+      el('div', { class: 'equip' }, ex.equipment || ''),
     );
     queueMicrotask(() => observer.observe(canvas));
     return tile;
@@ -324,6 +438,183 @@ function renderExercises(root, filter) {
   }
 }
 
+// ---------- PROGRESS ----------
+function renderProgress(root) {
+  const stats = allTimeStats();
+  const weeks = weeklyVolumes(8);
+  const thisWeek = weeks[weeks.length - 1];
+  const streak = weekStreak();
+
+  root.appendChild(el('div', { class: 'section-title' }, 'Training Dashboard'));
+
+  root.appendChild(el('div', { class: 'stat-cards' },
+    statCard(String(stats.workouts), 'Workouts logged'),
+    statCard(`${streak}w`, 'Week streak'),
+    statCard(fmt(thisWeek.volume), 'Volume this week (lb)'),
+    statCard(fmt(stats.totalVolume), 'All-time volume (lb)'),
+  ));
+
+  // Weekly volume chart
+  root.appendChild(el('div', { class: 'section-title' }, 'Weekly Volume — last 8 weeks'));
+  root.appendChild(weeklyChart(weeks));
+
+  // Per-exercise trend
+  root.appendChild(el('div', { class: 'section-title' }, 'Exercise Progress'));
+  const withHistory = EXERCISES.filter((ex) => exerciseHistory(ex.id).length >= 1);
+  const trendCard = el('div', { class: 'card' });
+  if (!withHistory.length) {
+    trendCard.appendChild(el('div', { class: 'empty-state' },
+      'Log a few sessions and your strength trends will appear here.'));
+  } else {
+    const initial = withHistory.find((e) => e.id === 'bench-press') || withHistory[0];
+    const select = el('select', { class: 'input select' },
+      ...withHistory.map((ex) => el('option', { value: ex.id, selected: ex.id === initial.id }, ex.name)),
+    );
+    const chartHolder = el('div');
+    const bestLine = el('div', { class: 'stage-meta', style: 'margin-top: 8px' });
+    const draw = (exId) => {
+      const ex = getExercise(exId);
+      const points = exerciseHistory(exId);
+      chartHolder.innerHTML = '';
+      if (points.length >= 2) {
+        chartHolder.appendChild(lineChart(points.map((p) => ({
+          label: p.date.slice(5),
+          value: epley1RM(p.topWeight, p.topReps),
+        }))));
+      } else {
+        chartHolder.appendChild(el('div', { class: 'stage-meta', style: 'padding: 12px 0' },
+          'Two or more sessions needed for a trend line.'));
+      }
+      const best = bestE1RM(exId);
+      bestLine.textContent = best.e1
+        ? `${ex.name} best: ${best.weight} lb × ${best.reps} → est. 1RM ${best.e1} lb (${best.date})`
+        : 'No completed sets yet.';
+    };
+    select.addEventListener('change', () => draw(select.value));
+    trendCard.appendChild(el('div', { class: 'row', style: 'margin-bottom: 10px' }, select));
+    trendCard.appendChild(chartHolder);
+    trendCard.appendChild(bestLine);
+    draw(initial.id);
+  }
+  root.appendChild(trendCard);
+
+  // Push / pull / legs / core balance
+  root.appendChild(el('div', { class: 'section-title' }, 'Training Balance — last 30 days'));
+  const cats = categoryVolumes((id) => getExercise(id)?.category, 30);
+  const total = Object.values(cats).reduce((a, b) => a + b, 0);
+  const balance = el('div', { class: 'card balance' });
+  if (!total) {
+    balance.appendChild(el('div', { class: 'empty-state' }, 'No volume logged in the last 30 days.'));
+  } else {
+    for (const key of ['push', 'pull', 'legs', 'core']) {
+      const v = cats[key] || 0;
+      const pct = Math.round((v / total) * 100);
+      balance.appendChild(el('div', { class: 'bal-row' },
+        el('span', { class: 'bal-name' }, key.toUpperCase()),
+        el('div', { class: 'bal-track' },
+          el('div', { class: `bal-fill ${key}`, style: `width: ${pct}%` })),
+        el('span', { class: 'bal-pct' }, `${pct}%`),
+      ));
+    }
+  }
+  root.appendChild(balance);
+
+  // Data controls
+  root.appendChild(el('div', { class: 'section-title' }, 'Your Data'));
+  const fileInput = el('input', {
+    type: 'file', accept: 'application/json', style: 'display:none',
+    onChange: async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      try {
+        const n = importData(await f.text());
+        flashToast(`Imported ${n} sessions ✓`);
+        render();
+      } catch (err) {
+        flashToast(`Import failed: ${err.message}`, 'error');
+      }
+    },
+  });
+  root.appendChild(el('div', { class: 'card row' },
+    el('button', {
+      class: 'btn',
+      onClick: () => {
+        const blob = new Blob([exportData()], { type: 'application/json' });
+        const a = el('a', {
+          href: URL.createObjectURL(blob),
+          download: `gtg-export-${todayISO()}.json`,
+        });
+        a.click();
+        URL.revokeObjectURL(a.href);
+      },
+    }, '⬇ Export JSON'),
+    el('button', { class: 'btn', onClick: () => fileInput.click() }, '⬆ Import JSON'),
+    fileInput,
+    el('span', { class: 'stage-meta' }, 'All data lives in this browser — export for backup or transfer.'),
+  ));
+}
+
+function statCard(big, label) {
+  return el('div', { class: 'stat-card' },
+    el('div', { class: 'big' }, big),
+    el('div', { class: 'label' }, label),
+  );
+}
+
+function weeklyChart(weeks) {
+  const W = 800, H = 200, P = 28;
+  const max = Math.max(...weeks.map((w) => w.volume), 1);
+  const bw = (W - 2 * P) / weeks.length;
+  const bars = weeks.map((w, i) => {
+    const h = Math.max(2, (w.volume / max) * (H - 2 * P - 16));
+    const x = P + i * bw + bw * 0.14;
+    const y = H - P - h;
+    const label = new Date(w.weekISO + 'T00:00:00')
+      .toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+    return `
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.72).toFixed(1)}" height="${h.toFixed(1)}"
+            rx="4" fill="${i === weeks.length - 1 ? '#7cf2c8' : '#2e3648'}"/>
+      <text x="${(x + bw * 0.36).toFixed(1)}" y="${H - P + 14}" fill="#5f6779" font-size="10" text-anchor="middle">${label}</text>
+      ${w.volume ? `<text x="${(x + bw * 0.36).toFixed(1)}" y="${(y - 5).toFixed(1)}" fill="#8b94a7" font-size="10" text-anchor="middle">${Math.round(w.volume / 1000)}k</text>` : ''}
+    `;
+  }).join('');
+  const card = el('div', { class: 'chart' });
+  card.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>`;
+  return card;
+}
+
+function lineChart(points, goal = null) {
+  const W = 800, H = 220, P = 30;
+  const ys = points.map((p) => p.value);
+  const yMin = Math.min(...ys, goal ?? Infinity) * 0.9;
+  const yMax = Math.max(...ys, goal ?? -Infinity) * 1.06;
+  const sx = (i) => P + (i / Math.max(1, points.length - 1)) * (W - 2 * P);
+  const sy = (v) => H - P - ((v - yMin) / (yMax - yMin || 1)) * (H - 2 * P);
+  const path = ys.map((v, i) => `${i === 0 ? 'M' : 'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
+
+  const goalLine = goal ? `
+    <line x1="${P}" y1="${sy(goal)}" x2="${W - P}" y2="${sy(goal)}" stroke="#62a8ff" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="${W - P}" y="${sy(goal) - 6}" fill="#62a8ff" font-size="11" text-anchor="end">Goal ${goal}</text>` : '';
+
+  const card = el('div', { class: 'chart' });
+  card.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7cf2c8" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#7cf2c8" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      ${goalLine}
+      <path d="${path} L ${sx(ys.length - 1)} ${H - P} L ${sx(0)} ${H - P} Z" fill="url(#g)"/>
+      <path d="${path}" fill="none" stroke="#7cf2c8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${ys.map((v, i) => `<circle cx="${sx(i)}" cy="${sy(v)}" r="3" fill="#7cf2c8"/>`).join('')}
+      ${points.map((p, i) => `<text x="${sx(i)}" y="${H - 8}" fill="#5f6779" font-size="9" text-anchor="middle">${p.label}</text>`).join('')}
+    </svg>
+  `;
+  return card;
+}
+
 // ---------- HISTORY ----------
 function renderHistory(root) {
   const sessions = getSessions();
@@ -336,12 +627,16 @@ function renderHistory(root) {
   for (const s of sessions) {
     const date = new Date(s.dateISO + 'T00:00:00');
     const day = el('div', { class: 'history-day' });
+    const dayMeta = getDay(s.dayId);
     const totalSets = s.entries.reduce((n, e) => n + e.sets.filter((x) => x.done).length, 0);
     const totalVolume = s.entries.reduce((n, e) =>
       n + e.sets.filter((x) => x.done).reduce((m, x) => m + (Number(x.weight) || 0) * (Number(x.reps) || 0), 0), 0);
     day.appendChild(el('div', { class: 'day-head' },
-      el('div', { class: 'date' }, date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })),
-      el('div', { class: 'summary' }, `${s.entries.length} exercises · ${totalSets} sets · ${Math.round(totalVolume).toLocaleString()} lb volume`),
+      el('div', {},
+        el('div', { class: 'date' }, date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })),
+        dayMeta ? el('div', { class: 'stage-meta' }, dayMeta.title) : null,
+      ),
+      el('div', { class: 'summary' }, `${s.entries.length} exercises · ${totalSets} sets · ${fmt(totalVolume)} lb volume`),
     ));
     if (!s.entries.length) {
       day.appendChild(el('div', { class: 'stage-meta' }, 'No exercises logged.'));
@@ -353,9 +648,9 @@ function renderHistory(root) {
       const vol = completed.reduce((m, x) => m + (Number(x.weight) || 0) * (Number(x.reps) || 0), 0);
       const row = el('div', { class: 'history-ex' },
         el('div', { class: 'ex-name' }, ex.name),
-        el('div', { class: 'ex-volume' }, vol ? `${Math.round(vol).toLocaleString()} lb` : `${completed.length} sets`),
+        el('div', { class: 'ex-volume' }, vol ? `${fmt(vol)} lb` : `${completed.length} sets`),
         el('div', { class: 'sets' },
-          ...e.sets.map((set) => el('span', { class: 'set' },
+          ...e.sets.map((set) => el('span', { class: 'set' + (set.done ? ' done' : '') },
             el('strong', {}, set.reps || '—'),
             ' × ',
             el('strong', {}, set.weight || '0'),
@@ -370,75 +665,55 @@ function renderHistory(root) {
   root.appendChild(list);
 }
 
-// ---------- GOAL (Bench 135) ----------
+// ---------- GOAL ----------
 function renderGoal(root) {
+  const target = Number(getSetting('benchTarget', 135));
   const benchHistory = exerciseHistory('bench-press');
-  const best = benchHistory.reduce((acc, p) => {
-    const e1 = epley1RM(p.topWeight, p.topReps);
-    return e1 > acc.e1 ? { e1, weight: p.topWeight, reps: p.topReps, date: p.date } : acc;
-  }, { e1: 0, weight: 0, reps: 0, date: null });
-
-  const target = 135;
+  const best = bestE1RM('bench-press');
   const pct = Math.min(100, Math.round((best.e1 / target) * 100));
+
+  const targetInput = el('input', {
+    class: 'input', type: 'number', step: '5', min: '45', value: target,
+    style: 'width: 90px; text-align: center',
+    onChange: (e) => {
+      const v = Number(e.target.value) || 135;
+      setSetting('benchTarget', v);
+      render();
+    },
+  });
 
   const meter = el('div', { class: 'bench-meter' },
     el('div', { class: 'label' }, 'Estimated Bench 1RM'),
     el('div', { class: 'big' }, String(best.e1 || 0), el('small', {}, ' lb')),
     el('div', { class: 'progress' }, el('div', { class: 'bar', style: `width: ${pct}%` })),
-    el('div', { class: 'target' }, `${pct}% of goal — Target: ${target} lb`),
+    el('div', { class: 'target row', style: 'gap: 8px; align-items: center' },
+      `${pct}% of goal · Target:`, targetInput, 'lb'),
     best.weight
-      ? el('div', { class: 'stage-meta' }, `Best top set: ${best.weight} lb × ${best.reps} reps`)
+      ? el('div', { class: 'stage-meta' }, `Best top set: ${best.weight} lb × ${best.reps} reps (${best.date})`)
       : el('div', { class: 'stage-meta' }, 'Log a Bench Press set to start tracking your 1RM.'),
   );
 
   const tips = el('div', { class: 'card' },
-    el('div', { class: 'section-title' }, 'Path to 135'),
+    el('div', { class: 'section-title' }, `Path to ${target}`),
     el('div', { class: 'col' },
-      el('div', { class: 'cue' }, 'Bench 2× per week. Day 1 heavy (4×5 progressive overload), Day 4 volume (3×8–10).'),
-      el('div', { class: 'cue' }, 'Add 2.5–5 lb to your top set each week as long as form holds.'),
-      el('div', { class: 'cue' }, 'Hit triceps and front delts with overhead press, dips, and pushdowns — they cap your bench.'),
-      el('div', { class: 'cue' }, 'Match push volume with row & pull-up volume to keep shoulders healthy.'),
-      el('div', { class: 'cue' }, 'Sleep ≥7h and eat in a slight surplus on training days. Strength = recovery + reps.'),
+      el('div', { class: 'cue' }, 'Bench 2× per week: Push A heavy (4×5 progressive overload), Push B volume (3×8–10).'),
+      el('div', { class: 'cue' }, 'Add 2.5–5 lb to your top set each week as long as bar speed holds.'),
+      el('div', { class: 'cue' }, 'Triceps cap your lockout — dips, pushdowns and overhead extensions are on the split for a reason.'),
+      el('div', { class: 'cue' }, 'Match pressing volume with rows & pull-ups to keep the shoulders healthy.'),
+      el('div', { class: 'cue' }, 'Squat and deadlift days drive whole-body strength — don\'t skip leg day.'),
+      el('div', { class: 'cue' }, 'Sleep ≥7h and eat at a slight surplus on training days. Strength = recovery + reps.'),
     ),
   );
 
   const goalHero = el('div', { class: 'goal-hero' }, meter, tips);
-  root.appendChild(el('div', { class: 'section-title' }, 'Bench Press 135 Goal'));
+  root.appendChild(el('div', { class: 'section-title' }, `Bench Press ${target} Goal`));
   root.appendChild(goalHero);
 
-  // Chart
   if (benchHistory.length >= 2) {
     root.appendChild(el('div', { class: 'section-title' }, 'Top Set Over Time'));
-    root.appendChild(renderChart(benchHistory));
+    root.appendChild(lineChart(
+      benchHistory.map((p) => ({ label: p.date.slice(5), value: epley1RM(p.topWeight, p.topReps) })),
+      target,
+    ));
   }
-}
-
-function renderChart(points) {
-  const W = 800, H = 220, P = 30;
-  const xs = points.map((_, i) => i);
-  const ys = points.map((p) => epley1RM(p.topWeight, p.topReps));
-  const yMin = Math.min(...ys, 45);
-  const yMax = Math.max(...ys, 145);
-  const sx = (i) => P + (i / Math.max(1, xs.length - 1)) * (W - 2 * P);
-  const sy = (v) => H - P - ((v - yMin) / (yMax - yMin || 1)) * (H - 2 * P);
-  const path = ys.map((v, i) => `${i === 0 ? 'M' : 'L'} ${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(' ');
-  const goalY = sy(135);
-
-  const card = el('div', { class: 'chart' });
-  card.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#7cf2c8" stop-opacity="0.4"/>
-          <stop offset="100%" stop-color="#7cf2c8" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
-      <line x1="${P}" y1="${goalY}" x2="${W - P}" y2="${goalY}" stroke="#62a8ff" stroke-dasharray="4 4" stroke-width="1"/>
-      <text x="${W - P}" y="${goalY - 6}" fill="#62a8ff" font-size="11" text-anchor="end">Goal 135</text>
-      <path d="${path} L ${sx(ys.length - 1)} ${H - P} L ${sx(0)} ${H - P} Z" fill="url(#g)"/>
-      <path d="${path}" fill="none" stroke="#7cf2c8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      ${ys.map((v, i) => `<circle cx="${sx(i)}" cy="${sy(v)}" r="3" fill="#7cf2c8"/>`).join('')}
-    </svg>
-  `;
-  return card;
 }

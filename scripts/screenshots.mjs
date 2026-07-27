@@ -33,9 +33,13 @@ const OUT = path.join(ROOT, 'docs', 'screenshots');
 const PORT = 4173;
 
 const EXERCISES = [
-  'bench-press', 'incline-bench', 'overhead-press', 'pushup', 'dip',
-  'pullup', 'row', 'lat-pulldown', 'bicep-curl', 'tricep-pushdown',
+  'bench-press', 'incline-bench', 'chest-fly', 'overhead-press', 'pushup',
+  'dip', 'tricep-pushdown', 'overhead-triceps',
+  'pullup', 'row', 'lat-pulldown', 'seated-row', 'face-pull',
+  'bicep-curl', 'hammer-curl', 'lateral-raise',
+  'squat', 'deadlift', 'rdl', 'split-squat', 'glute-bridge', 'calf-raise',
   'plank', 'crunch', 'russian-twist', 'hanging-leg-raise',
+  'mountain-climber', 'dead-bug',
 ];
 
 async function run(cmd, args, opts = {}) {

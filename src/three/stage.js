@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   buildSkeleton, setPose, applyEnvironment, buildEnvironment, applyEnvVisibility,
+  solveArmIK,
 } from './stickFigure.js';
 import { buildProps, updateProps } from './props.js';
 
@@ -100,6 +101,11 @@ export class Stage {
       const env = applyEnvironment(this.skel, p);
       applyEnvVisibility(this.env, env);
       setPose(this.skel, p);
+      if (p.ikL || p.ikR) {
+        this.skel.root.updateMatrixWorld(true);
+        if (p.ikL) solveArmIK(this.skel, 'l', p.ikL.t, p.ikL.p);
+        if (p.ikR) solveArmIK(this.skel, 'r', p.ikR.t, p.ikR.p);
+      }
       updateProps(this.props, this.skel, p, this.env);
       this.cameraFor(ex, elapsed);
     }
