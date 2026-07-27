@@ -5,63 +5,107 @@ import {
 } from './stickFigure.js';
 import { buildProps, updateProps } from './props.js';
 
+// Browsers allow only a handful of live WebGL contexts per page (~8-16);
+// one renderer per tile crashes the exercise library. Instead, ALL stages
+// share a single offscreen WebGL renderer: each frame, every visible stage
+// is rendered into it and blitted onto that stage's plain 2D canvas.
+// One GL context total, any number of animated tiles.
+
+const MAX_DPR = 2;
+
 const activeStages = new Set();
+let rafId = 0;
+let shared = null;
+
+function getShared() {
+  if (!shared) {
+    const canvas = document.createElement('canvas');
+    // Keep the context on GPU resets so tiles recover instead of dying.
+    canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(1); // all sizing is done in device pixels
+    renderer.setClearColor(0x000000, 0);
+    renderer.setScissorTest(true);
+    shared = { canvas, renderer };
+  }
+  return shared;
+}
+
+// Grow-only backing store so we never reallocate per tile.
+function ensureSharedSize(px, py) {
+  const { canvas, renderer } = shared;
+  if (canvas.width < px || canvas.height < py) {
+    renderer.setSize(Math.max(canvas.width, px), Math.max(canvas.height, py), false);
+  }
+}
+
+function tick() {
+  rafId = 0;
+  if (!activeStages.size) return;
+  const { renderer, canvas } = getShared();
+  for (const stage of activeStages) stage.renderFrame(renderer, canvas);
+  rafId = requestAnimationFrame(tick);
+}
+
+function ensureLoop() {
+  if (!rafId) rafId = requestAnimationFrame(tick);
+}
 
 const _camTarget = new THREE.Vector3();
 
 export class Stage {
   constructor(canvas, { exercise, speed = 1.0, autoRotate = true } = {}) {
     this.canvas = canvas;
+    this.ctx2d = canvas.getContext('2d');
     this.exercise = exercise;
     this.speed = speed;
     this.autoRotate = autoRotate;
     this.t0 = performance.now();
     this.disposed = false;
+    this.onScreen = true;
+    this.needsBlit = true;
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x000000, 0);
-    this.renderer = renderer;
-
-    const scene = new THREE.Scene();
-    this.scene = scene;
-
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
-    this.camera = camera;
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 
     const hemi = new THREE.HemisphereLight(0xeaf2ff, 0x0e1320, 0.55);
-    scene.add(hemi);
+    this.scene.add(hemi);
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
     key.position.set(3, 5, 4);
-    scene.add(key);
+    this.scene.add(key);
     const rim = new THREE.DirectionalLight(0x7cf2c8, 0.45);
     rim.position.set(-3, 2, -2);
-    scene.add(rim);
+    this.scene.add(rim);
 
     this.skel = buildSkeleton();
-    scene.add(this.skel.root);
-    this.env = buildEnvironment(scene);
-    this.props = buildProps(scene);
+    this.scene.add(this.skel.root);
+    this.env = buildEnvironment(this.scene);
+    this.props = buildProps(this.scene);
 
-    this.frame();
-    this.observer = new ResizeObserver(() => this.frame());
-    this.observer.observe(canvas);
+    this.cssW = canvas.clientWidth || 300;
+    this.cssH = canvas.clientHeight || 200;
+    this.resizeObserver = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        this.cssW = e.contentRect.width || this.cssW;
+        this.cssH = e.contentRect.height || this.cssH;
+      }
+    });
+    this.resizeObserver.observe(canvas);
 
+    // Pause stages that scroll out of view — they cost nothing while hidden.
+    this.visObserver = new IntersectionObserver(([e]) => {
+      this.onScreen = e.isIntersecting;
+    }, { rootMargin: '120px 0px' });
+    this.visObserver.observe(canvas);
+
+    getShared();
     activeStages.add(this);
-    this.loop();
+    ensureLoop();
   }
 
   setExercise(exercise) {
     this.exercise = exercise;
     this.t0 = performance.now();
-  }
-
-  frame() {
-    const w = this.canvas.clientWidth || 300;
-    const h = this.canvas.clientHeight || 200;
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
   }
 
   cameraFor(exercise, elapsed) {
@@ -88,8 +132,18 @@ export class Stage {
     this.camera.lookAt(_camTarget);
   }
 
-  loop = () => {
-    if (this.disposed) return;
+  renderFrame(renderer, sharedCanvas) {
+    if (this.disposed || !this.onScreen) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    const pw = Math.max(1, Math.round(this.cssW * dpr));
+    const ph = Math.max(1, Math.round(this.cssH * dpr));
+    if (this.canvas.width !== pw || this.canvas.height !== ph) {
+      this.canvas.width = pw;
+      this.canvas.height = ph;
+    }
+    ensureSharedSize(pw, ph);
+
     const now = performance.now();
     const elapsed = (now - this.t0) / 1000;
     const periodSec = (this.exercise?.tempo || 2.4) / this.speed;
@@ -107,19 +161,36 @@ export class Stage {
         if (p.ikR) solveArmIK(this.skel, 'r', p.ikR.t, p.ikR.p);
       }
       updateProps(this.props, this.skel, p, this.env);
+      this.camera.aspect = pw / ph;
+      this.camera.updateProjectionMatrix();
       this.cameraFor(ex, elapsed);
     }
 
-    this.renderer.render(this.scene, this.camera);
-    this._raf = requestAnimationFrame(this.loop);
-  };
+    // Render into the shared GL canvas, then copy this stage's region onto
+    // its own 2D canvas (drawImage is valid until the browser composites).
+    renderer.setViewport(0, 0, pw, ph);
+    renderer.setScissor(0, 0, pw, ph);
+    renderer.render(this.scene, this.camera);
+
+    this.ctx2d.clearRect(0, 0, pw, ph);
+    this.ctx2d.drawImage(
+      sharedCanvas,
+      0, sharedCanvas.height - ph, pw, ph,
+      0, 0, pw, ph,
+    );
+  }
 
   dispose() {
     this.disposed = true;
-    cancelAnimationFrame(this._raf);
-    this.observer?.disconnect();
-    this.renderer.dispose();
+    this.resizeObserver?.disconnect();
+    this.visObserver?.disconnect();
     activeStages.delete(this);
+    // Free this stage's GPU buffers from the shared context.
+    this.scene.traverse((obj) => {
+      obj.geometry?.dispose();
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else obj.material?.dispose();
+    });
   }
 }
 
