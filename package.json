@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "validate": "node scripts/validate-exercises.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "engines": {

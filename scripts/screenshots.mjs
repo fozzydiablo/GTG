@@ -32,11 +32,16 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'docs', 'screenshots');
 const PORT = 4173;
 
-const EXERCISES = [
-  'bench-press', 'incline-bench', 'overhead-press', 'pushup', 'dip',
-  'pullup', 'row', 'lat-pulldown', 'bicep-curl', 'tricep-pushdown',
-  'plank', 'crunch', 'russian-twist', 'hanging-leg-raise',
-];
+// Every exercise in the library, so a new entry is captured automatically.
+// Pass id substrings to narrow it down: `node scripts/screenshots.mjs kb-`.
+const { EXERCISES: LIBRARY } = await import('../src/data/exercises/index.js');
+const filters = process.argv.slice(2);
+// `poster` is the point in the rep worth photographing (top of a swing, bottom
+// of a squat). The app freezes the animation there via ?phase=, so captures are
+// deterministic instead of "whatever frame 1.5 seconds landed on".
+const EXERCISES = LIBRARY
+  .filter((ex) => !filters.length || filters.some((f) => ex.id.includes(f)))
+  .map((ex) => ({ id: ex.id, phase: ex.poster ?? 0.5 }));
 
 async function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -81,13 +86,13 @@ async function main() {
     });
     const page = await ctx.newPage();
 
-    for (const id of EXERCISES) {
-      const url = `http://localhost:${PORT}/#/today/${id}`;
-      process.stdout.write(`  ${id}... `);
+    for (const { id, phase } of EXERCISES) {
+      const url = `http://localhost:${PORT}/?phase=${phase}#/today/${id}`;
+      process.stdout.write(`  ${id} @ ${phase}... `);
       await page.goto(url, { waitUntil: 'networkidle' });
       await page.waitForSelector('.hero .stage canvas');
-      // Let the animation reach the top of the rep (≈ phase 0.5 of period).
-      await page.waitForTimeout(1500);
+      // The rep is frozen at `phase`; this is just letting WebGL settle.
+      await page.waitForTimeout(600);
       const canvas = await page.$('.hero .stage canvas');
       await canvas.screenshot({ path: path.join(OUT, `${id}.png`) });
       console.log('ok');

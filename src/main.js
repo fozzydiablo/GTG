@@ -1,12 +1,18 @@
 import './style.css';
 import {
-  EXERCISES, SPLIT, MUSCLE_GROUPS,
-  getExercise, suggestedDay, exercisesForMuscle,
-} from './data/exercises.js';
+  EXERCISES, getExercise, FACETS, getFacet,
+} from './data/exercises/index.js';
+import {
+  PROGRAMS, getProgram, suggestedDay, analyseRoutine, DEFAULT_PROGRAM_ID,
+} from './data/routines.js';
+import {
+  muscleNames, patternName, equipmentName, loadingName, levelName,
+  categoryName, planeName, DEMAND_KEYS,
+} from './data/taxonomy.js';
 import { Stage, disposeAllStages } from './three/stage.js';
 import {
   getSessions, getOrCreateTodaySession, getEntry, updateEntry,
-  deleteEntry, exerciseHistory, epley1RM,
+  deleteEntry, exerciseHistory, epley1RM, getSettings, setSetting,
 } from './store.js';
 import { initPWA } from './pwa.js';
 
@@ -24,7 +30,9 @@ const el = (tag, props = {}, ...children) => {
   }
   for (const c of children.flat()) {
     if (c == null || c === false) continue;
-    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    // Numbers arrive from stored set data, which is not always stringified.
+    const isText = typeof c === 'string' || typeof c === 'number';
+    node.appendChild(isText ? document.createTextNode(String(c)) : c);
   }
   return node;
 };
@@ -54,14 +62,15 @@ function render() {
   const view = $('#view');
   view.innerHTML = '';
   if (route === 'today') renderToday(view, params[0]);
-  else if (route === 'exercises') renderExercises(view, params[0]);
+  else if (route === 'exercises') renderExercises(view, params[0], params[1]);
   else if (route === 'history') renderHistory(view);
   else if (route === 'goal') renderGoal(view);
 }
 
 // ---------- TODAY ----------
 function renderToday(root, focusExerciseId) {
-  const day = suggestedDay();
+  const program = getProgram(getSettings().programId || DEFAULT_PROGRAM_ID);
+  const day = suggestedDay(program);
   const session = getOrCreateTodaySession(day.id);
 
   // Hero exercise
@@ -77,7 +86,16 @@ function renderToday(root, focusExerciseId) {
           el('h2', { class: 'stage-title' }, focused.name),
           el('div', { class: 'stage-meta' }, focused.primary.join(' · ')),
         ),
-        el('span', { class: 'pill accent' }, focused.category.toUpperCase()),
+        el('span', { class: 'pill accent' }, categoryName(focused.category).toUpperCase()),
+      ),
+      el('div', { class: 'stage-tags' },
+        // Pattern · loading · kit, de-duplicated (a carry is both a "carry"
+        // pattern and "carry" loading — one chip is enough).
+        ...[...new Set([
+          patternName(focused.pattern),
+          loadingName(focused.loading),
+          ...focused.equipment.map(equipmentName),
+        ])].map((label) => el('span', { class: 'tag' }, label)),
       ),
     ),
   );
@@ -101,11 +119,28 @@ function renderToday(root, focusExerciseId) {
 
   const hero = el('div', { class: 'hero' }, heroCard, info);
 
+  // Program picker
+  const programRow = el('div', { class: 'program-bar' },
+    el('div', { class: 'label' }, 'Program'),
+    el('select', {
+      class: 'select',
+      onChange: (e) => { setSetting('programId', e.target.value); go('today'); render(); },
+    },
+      ...PROGRAMS.map((p) => el('option', {
+        value: p.id,
+        selected: p.id === program.id ? 'selected' : false,
+      }, `${p.name} · ${p.daysPerWeek}d`)),
+    ),
+    el('div', { class: 'stage-meta' }, program.subtitle),
+  );
+
   // Day plan
+  const analysis = analyseRoutine(day.exercises);
   const planTitle = el('div', { class: 'row', style: 'justify-content: space-between; align-items: baseline;' },
     el('div', {},
       el('div', { class: 'section-title', style: 'margin: 0' }, day.title),
-      el('div', { class: 'stage-meta' }, day.subtitle),
+      el('div', { class: 'stage-meta' },
+        `${day.subtitle} — ${analysis.patternNames.join(' · ')} · ~${analysis.estMinutes} min`),
     ),
     el('span', { class: 'pill blue' }, new Date().toLocaleDateString(undefined, { weekday: 'long' })),
   );
@@ -128,11 +163,120 @@ function renderToday(root, focusExerciseId) {
   }
 
   root.appendChild(hero);
+  root.appendChild(exerciseDetail(focused));
+  root.appendChild(programRow);
   root.appendChild(planTitle);
   root.appendChild(planGrid);
 
-  // Kick off the hero stage after layout
-  queueMicrotask(() => new Stage(heroStageCanvas, { exercise: focused, autoRotate: true, speed: 1.0 }));
+  // Kick off the hero stage after layout. ?phase=0.42 freezes the rep at a
+  // fixed point — used by scripts/screenshots.mjs to capture poster frames.
+  const frozen = new URLSearchParams(location.search).get('phase');
+  queueMicrotask(() => new Stage(heroStageCanvas, {
+    exercise: focused,
+    autoRotate: frozen == null,
+    speed: 1.0,
+    phase: frozen == null ? null : Number(frozen),
+  }));
+}
+
+// Full classification read-out for one exercise: what it trains, how it's
+// classified, what it costs, and what to do before/after it.
+function exerciseDetail(ex) {
+  const chip = (label, value) => el('div', { class: 'spec' },
+    el('div', { class: 'k' }, label),
+    el('div', { class: 'v' }, value),
+  );
+
+  const muscleRow = (label, ids, cls) => (ids.length
+    ? el('div', { class: 'muscle-row' },
+      el('div', { class: 'k' }, label),
+      el('div', { class: 'chips' }, ...muscleNames(ids).map((n) => el('span', { class: `tag ${cls}` }, n))),
+    )
+    : null);
+
+  const demandBar = (d) => el('div', { class: 'demand' },
+    el('div', { class: 'k' }, d.name),
+    el('div', { class: 'meter', title: `${d.name}: ${ex.demands[d.id]}/5 — ${d.desc}` },
+      ...Array.from({ length: 5 }, (_, i) =>
+        el('span', { class: 'notch' + (i < ex.demands[d.id] ? ' on' : '') })),
+    ),
+  );
+
+  const related = (label, ids) => {
+    const list = ids.map(getExercise).filter(Boolean);
+    if (!list.length) return null;
+    return el('div', { class: 'muscle-row' },
+      el('div', { class: 'k' }, label),
+      el('div', { class: 'chips' },
+        ...list.map((r) => el('button', {
+          class: 'tag link', onClick: () => go('today', r.id),
+        }, r.name)),
+      ),
+    );
+  };
+
+  const p = ex.programming;
+  const repText = ex.metric.type === 'time'
+    ? `${p.sets} × ${p.reps}s`
+    : ex.metric.type === 'distance'
+      ? `${p.sets} × ${p.reps}m`
+      : `${p.sets} × ${p.repRange ? `${p.repRange[0]}–${p.repRange[1]}` : p.reps}`;
+
+  return el('div', { class: 'card detail' },
+    el('div', { class: 'section-title' }, 'Classification'),
+    el('div', { class: 'spec-grid' },
+      chip('Pattern', patternName(ex.pattern)),
+      chip('Category', categoryName(ex.category)),
+      chip('Force', ex.force),
+      chip('Mechanics', ex.mechanics),
+      chip('Chain', ex.chain),
+      chip('Laterality', ex.laterality + (ex.metric.perSide ? ' (per side)' : '')),
+      chip('Loading', loadingName(ex.loading)),
+      chip('Planes', ex.planes.map(planeName).join(', ')),
+      chip('Level', levelName(ex.level)),
+      chip('Equipment', ex.equipment.map(equipmentName).join(' + ')),
+      chip('Prescription', `${repText} · ${p.restSec}s rest${p.rpe ? ` · RPE ${p.rpe}` : ''}`),
+      chip('Trains for', ex.goals.join(', ')),
+    ),
+
+    el('div', { class: 'section-title' }, 'Muscles'),
+    el('div', { class: 'col' },
+      muscleRow('Prime movers', ex.muscles.primary, 'accent'),
+      muscleRow('Assisting', ex.muscles.secondary, ''),
+      muscleRow('Stabilising', ex.muscles.stabilizers, 'dim'),
+      ex.jointActions.length
+        ? el('div', { class: 'muscle-row' },
+          el('div', { class: 'k' }, 'Joint actions'),
+          el('div', { class: 'chips' },
+            ...ex.jointActions.map((ja) => el('span', { class: 'tag dim' }, `${ja.joint} ${ja.action}`))),
+        )
+        : null,
+    ),
+
+    el('div', { class: 'section-title' }, 'Demands'),
+    el('div', { class: 'demand-grid' }, ...DEMAND_KEYS.map(demandBar)),
+
+    ex.mistakes.length
+      ? el('div', {},
+        el('div', { class: 'section-title' }, 'Common Mistakes'),
+        el('div', { class: 'exercise-cues warn' },
+          ...ex.mistakes.map((m) => el('div', { class: 'cue' }, m))),
+      )
+      : null,
+
+    ex.breathing ? el('div', { class: 'note' }, `Breathing — ${ex.breathing}`) : null,
+    ex.contraindications?.length
+      ? el('div', { class: 'note danger' }, `Skip or modify if: ${ex.contraindications.join(', ')}.`)
+      : null,
+
+    el('div', { class: 'section-title' }, 'Related'),
+    el('div', { class: 'col' },
+      related('Easier', ex.progression.regressions),
+      related('Harder', ex.progression.progressions),
+      related('Swap for', ex.progression.variations),
+      related('Pairs with', ex.progression.pairsWith),
+    ),
+  );
 }
 
 function lastSetText(session, ex) {
@@ -145,17 +289,23 @@ function lastSetText(session, ex) {
 function buildLogger(root, session, exercise) {
   root.innerHTML = '';
   const entry = getEntry(session.id, exercise.id, exercise.defaults);
-  const unit = exercise.defaults?.unit || 'lb';
+  const metric = exercise.metric;
+  const unit = exercise.defaults?.unit || metric.unit || 'lb';
+  // What the first column counts, and whether a load column makes sense.
+  const countLabel = { reps: 'Reps', time: 'Seconds', distance: 'Metres' }[metric.type] || 'Reps';
+  const loaded = metric.load !== 'bodyweight';
+  const weightUnit = metric.type === 'reps' ? unit : 'lb';
 
   const head = el('div', { class: 'row', style: 'justify-content: space-between' },
     el('div', { class: 'section-title', style: 'margin: 0' }, 'Log Sets'),
-    el('span', { class: 'pill' }, `${unit === 'sec' ? 'Time' : 'Reps × Weight'}`),
+    el('span', { class: 'pill' },
+      `${countLabel}${loaded ? ` × Weight` : ''}${metric.perSide ? ' · per side' : ''}`),
   );
 
   const grid = el('div', { class: 'set-grid' },
     el('div', { class: 'head' }, '#'),
-    el('div', { class: 'head' }, unit === 'sec' ? 'Seconds' : 'Reps'),
-    el('div', { class: 'head' }, unit === 'sec' ? '—' : `Weight (${unit})`),
+    el('div', { class: 'head' }, countLabel),
+    el('div', { class: 'head' }, loaded ? `Weight (${weightUnit})` : '—'),
     el('div', { class: 'head' }),
   );
 
@@ -169,8 +319,8 @@ function buildLogger(root, session, exercise) {
       });
       const weightInput = el('input', {
         class: 'input', type: 'number', min: '0', step: '2.5', value: s.weight,
-        inputmode: 'decimal', placeholder: unit === 'sec' ? '—' : '0',
-        disabled: unit === 'sec' ? true : false,
+        inputmode: 'decimal', placeholder: loaded ? '0' : '—',
+        disabled: loaded ? false : true,
       });
       const idx = el('div', { class: 'set-row idx' }, String(i + 1));
       const del = el('button', {
@@ -244,7 +394,7 @@ function buildLogger(root, session, exercise) {
   const history = exerciseHistory(exercise.id);
   const prev = history[history.length - 1];
   const prevText = prev
-    ? `Last time: ${prev.topWeight}${unit === 'sec' ? 's' : ` ${unit}`} × ${prev.topReps}`
+    ? `Last time: ${loaded ? `${prev.topWeight} ${weightUnit} × ` : ''}${prev.topReps} ${countLabel.toLowerCase()}`
     : 'No prior history yet — log a set to start tracking.';
 
   root.appendChild(head);
@@ -254,10 +404,17 @@ function buildLogger(root, session, exercise) {
   root.appendChild(el('div', { class: 'stage-meta' }, prevText));
 }
 
-// ---------- EXERCISES (grouped by muscle) ----------
-function renderExercises(root, filter) {
-  const validKeys = MUSCLE_GROUPS.map((g) => g.key);
-  const active = validKeys.includes(filter) ? filter : 'all';
+// ---------- EXERCISES (grouped by any classification facet) ----------
+// Route: #/exercises/<facet>/<bucket>, e.g. #/exercises/pattern/hinge.
+// A bare #/exercises/<muscleGroup> still works — that was the old URL shape.
+function renderExercises(root, facetKey, bucketKey) {
+  let facet = getFacet(facetKey);
+  let active = bucketKey || 'all';
+  if (!facet) {
+    facet = getFacet('muscle');
+    active = facetKey && facet.buckets().some((b) => b.key === facetKey) ? facetKey : 'all';
+  }
+  if (active !== 'all' && !facet.buckets().some((b) => b.key === active)) active = 'all';
 
   // Per-render observer: only mounts a Stage when its tile scrolls near
   // the viewport, so opening "All" doesn't spin up 25 WebGL contexts at once.
@@ -282,38 +439,52 @@ function renderExercises(root, filter) {
       el('div', { class: 'stage-mini' }, canvas),
       el('div', { class: 'name' }, ex.name),
       el('div', { class: 'muscles' }, ex.primary.join(' · ')),
+      el('div', { class: 'tile-tags' },
+        el('span', { class: 'tag' }, patternName(ex.pattern)),
+        el('span', { class: 'tag dim' }, equipmentName(ex.equipment[0])),
+      ),
     );
     queueMicrotask(() => observer.observe(canvas));
     return tile;
   };
 
+  const buckets = facet.buckets();
+
+  // Which axis are we slicing the library on?
+  const facetBar = el('div', { class: 'facet-bar' },
+    el('span', { class: 'label' }, 'Group by'),
+    ...FACETS.map((f) => el('button', {
+      class: 'chip' + (f.key === facet.key ? ' active' : ''),
+      onClick: () => go('exercises', f.key, 'all'),
+    }, f.name)),
+  );
+
   const bar = el('div', { class: 'filter-bar' },
     el('button', {
       class: 'chip' + (active === 'all' ? ' active' : ''),
-      onClick: () => go('exercises', 'all'),
+      onClick: () => go('exercises', facet.key, 'all'),
     }, 'All', el('span', { class: 'chip-count' }, String(EXERCISES.length))),
-    ...MUSCLE_GROUPS.map((g) => {
-      const count = exercisesForMuscle(g.key).length;
+    ...buckets.map((b) => {
+      const count = facet.match(b.key).length;
       return el('button', {
-        class: 'chip' + (active === g.key ? ' active' : ''),
-        onClick: () => go('exercises', g.key),
-      }, g.name, el('span', { class: 'chip-count' }, String(count)));
+        class: 'chip' + (active === b.key ? ' active' : ''),
+        onClick: () => go('exercises', facet.key, b.key),
+      }, b.name, el('span', { class: 'chip-count' }, String(count)));
     }),
   );
 
   root.appendChild(el('div', { class: 'section-title' }, 'Exercise Library'));
+  root.appendChild(facetBar);
   root.appendChild(bar);
 
-  const groupsToShow = active === 'all'
-    ? MUSCLE_GROUPS
-    : MUSCLE_GROUPS.filter((g) => g.key === active);
+  const shown = active === 'all' ? buckets : buckets.filter((b) => b.key === active);
 
-  for (const group of groupsToShow) {
-    const list = exercisesForMuscle(group.key);
+  for (const bucket of shown) {
+    const list = facet.match(bucket.key);
     if (!list.length) continue;
     const section = el('section', { class: 'muscle-section' });
     section.appendChild(el('div', { class: 'muscle-header' },
-      el('h3', { class: 'muscle-name' }, group.name),
+      el('h3', { class: 'muscle-name' }, bucket.name),
       el('span', { class: 'muscle-count' },
         `${list.length} ${list.length === 1 ? 'exercise' : 'exercises'}`),
     ));
@@ -325,6 +496,21 @@ function renderExercises(root, filter) {
 }
 
 // ---------- HISTORY ----------
+// One logged set, read through the exercise's metric so a 40 m carry doesn't
+// render as "40 × 44 m" and a 60-second plank doesn't grow a weight column.
+function setChip(ex, set) {
+  const count = set.reps || '—';
+  const weight = Number(set.weight) || 0;
+  const type = ex.metric?.type || 'reps';
+  if (type === 'time') return el('span', { class: 'set' }, el('strong', {}, count), ' s');
+  if (type === 'distance') {
+    return el('span', { class: 'set' },
+      el('strong', {}, count), ' m', weight ? ` · ${weight} lb` : '');
+  }
+  return el('span', { class: 'set' },
+    el('strong', {}, count), ' × ', el('strong', {}, String(weight)), ' lb');
+}
+
 function renderHistory(root) {
   const sessions = getSessions();
   root.appendChild(el('div', { class: 'section-title' }, 'Workout History'));
@@ -355,12 +541,7 @@ function renderHistory(root) {
         el('div', { class: 'ex-name' }, ex.name),
         el('div', { class: 'ex-volume' }, vol ? `${Math.round(vol).toLocaleString()} lb` : `${completed.length} sets`),
         el('div', { class: 'sets' },
-          ...e.sets.map((set) => el('span', { class: 'set' },
-            el('strong', {}, set.reps || '—'),
-            ' × ',
-            el('strong', {}, set.weight || '0'),
-            ` ${set.unit || 'lb'}`,
-          )),
+          ...e.sets.map((set) => setChip(ex, set)),
         ),
       );
       day.appendChild(row);

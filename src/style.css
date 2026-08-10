@@ -414,6 +414,154 @@ input, select, textarea {
 }
 .filter-bar .chip.active .chip-count { color: var(--accent); background: rgba(124, 242, 200, 0.08); }
 
+/* Classification chips — used on the stage overlay, tiles and detail card */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(11, 13, 18, 0.72);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.tag.accent { color: var(--accent); border-color: rgba(124, 242, 200, 0.32); }
+.tag.dim { color: var(--text-muted); }
+.tag.link {
+  font-family: inherit;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 11px;
+  color: var(--accent-2);
+  border-color: rgba(98, 168, 255, 0.28);
+}
+.tag.link:hover { color: var(--text); border-color: var(--accent-2); }
+
+.stage-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.tile-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* Exercise detail (classification read-out) */
+.detail { margin-bottom: 18px; display: flex; flex-direction: column; gap: 6px; }
+.detail .section-title { margin-top: 20px; margin-bottom: 10px; }
+.detail .section-title:first-child { margin-top: 0; }
+
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.spec {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.spec .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+.spec .v { font-size: 13px; font-weight: 600; margin-top: 3px; text-transform: capitalize; }
+
+.muscle-row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.muscle-row .k {
+  min-width: 104px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+.muscle-row .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.demand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.demand { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.demand .k { font-size: 12px; color: var(--text-dim); }
+.demand .meter { display: flex; gap: 3px; }
+.demand .notch {
+  width: 14px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--bg-3);
+}
+.demand .notch.on { background: var(--accent); box-shadow: 0 0 8px rgba(124, 242, 200, 0.35); }
+
+.note {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-1);
+  border-left: 2px solid var(--line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 8px 12px;
+}
+.note.danger { color: var(--warn); border-left-color: var(--warn); }
+
+.exercise-cues.warn .cue::before { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+
+/* Program picker */
+.program-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+}
+.program-bar .label,
+.facet-bar .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+.select {
+  background: var(--bg-1);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.select:focus { border-color: var(--accent); outline: none; }
+
+.facet-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.facet-bar .chip {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.facet-bar .chip:hover { color: var(--text); }
+.facet-bar .chip.active { color: var(--accent); border-color: rgba(124, 242, 200, 0.4); background: var(--bg-2); }
+
 .muscle-section { margin-top: 24px; }
 .muscle-section:first-of-type { margin-top: 12px; }
 .muscle-header {

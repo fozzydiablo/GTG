@@ -228,8 +228,10 @@ export function buildSkeleton() {
 export function setPose(skel, p) {
   const { spine, neck, lArm, rArm, lLeg, rLeg } = skel;
 
-  spine.rotation.set(p.spine || 0, 0, 0);
-  neck.rotation.set(-(p.spine || 0) * 0.4 + (p.neck || 0), 0, 0);
+  // spineSide = lateral flexion (windmill, suitcase carry), spineTwist =
+  // rotation about the long axis (halo, renegade row anti-rotation).
+  spine.rotation.set(p.spine || 0, p.spineTwist || 0, p.spineSide || 0);
+  neck.rotation.set(-(p.spine || 0) * 0.4 + (p.neck || 0), 0, -(p.spineSide || 0) * 0.5);
 
   lArm.shoulderAbduct.rotation.set(0, 0, -(p.lShoulderAbduct || 0));
   lArm.shoulderForward.rotation.set(p.lShoulder || 0, 0, 0);
@@ -299,9 +301,18 @@ export function applyEnvironment(skel, p) {
   } else if (p.cableStanding) {
     skel.root.position.set(0, 0, 0);
     env.cableColumn = true;
+  } else if (p.floorStanding) {
+    // Standing on the mat (kettlebell floor work, get-ups).
+    skel.root.position.set(0, 0, 0);
+    env.floorMat = true;
   }
 
+  // Rig-controlled offsets, applied on top of whatever the environment set.
+  // rootZ lets standing lifts shift the hips back (squat, hinge) while the
+  // feet stay planted; rootRotX pitches the whole figure (get-up).
   skel.root.position.y += (p.rootY || 0);
+  skel.root.position.z += (p.rootZ || 0);
+  if (p.rootRotX) skel.root.rotation.x += p.rootRotX;
   return env;
 }
 

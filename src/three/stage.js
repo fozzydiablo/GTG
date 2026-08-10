@@ -9,11 +9,14 @@ const activeStages = new Set();
 const _camTarget = new THREE.Vector3();
 
 export class Stage {
-  constructor(canvas, { exercise, speed = 1.0, autoRotate = true } = {}) {
+  constructor(canvas, { exercise, speed = 1.0, autoRotate = true, phase = null } = {}) {
     this.canvas = canvas;
     this.exercise = exercise;
     this.speed = speed;
     this.autoRotate = autoRotate;
+    // Freeze the rep at a fixed point in the loop (0..1). Used by the
+    // screenshot script so every capture lands on the same frame.
+    this.phase = phase;
     this.t0 = performance.now();
     this.disposed = false;
 
@@ -92,7 +95,7 @@ export class Stage {
     const now = performance.now();
     const elapsed = (now - this.t0) / 1000;
     const periodSec = (this.exercise?.tempo || 2.4) / this.speed;
-    const t = (elapsed % periodSec) / periodSec;
+    const t = this.phase != null ? this.phase : (elapsed % periodSec) / periodSec;
 
     const ex = this.exercise;
     if (ex && ex.rig) {

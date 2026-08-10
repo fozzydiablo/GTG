@@ -21,6 +21,25 @@ function todayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+// --- settings (active program, etc.) ---------------------------------------
+
+const SETTINGS_KEY = 'gtg.settings.v1';
+
+export function getSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+export function setSetting(key, value) {
+  const settings = getSettings();
+  settings[key] = value;
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  return settings;
+}
+
 export function getSessions() {
   return read().sessions.slice().sort((a, b) => b.dateISO.localeCompare(a.dateISO));
 }

@@ -54,6 +54,39 @@ function makeWeightPlate() {
   return g;
 }
 
+// Kettlebell. Built around the grip: the group's origin is the point the hand
+// holds, and the bell hangs along local -Y. updateProps() then rotates that
+// -Y axis to wherever the bell should point (down, overhead, along the
+// forearm in the rack), so one mesh covers every kettlebell position.
+function makeKettlebell() {
+  const g = new THREE.Group();
+  g.name = 'kettlebell';
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x2b3040, roughness: 0.55, metalness: 0.25 });
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x9aa3b3, roughness: 0.4, metalness: 0.6 });
+
+  // Handle: half-ring arching over the bell, grip at the top (the origin).
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.017, 10, 24, Math.PI), handleMat);
+  handle.position.y = -0.105;
+  g.add(handle);
+
+  // Neck between handle and bell.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.075, 0.07, 14), ironMat);
+  neck.position.y = -0.135;
+  g.add(neck);
+
+  // Bell.
+  const bell = new THREE.Mesh(new THREE.SphereGeometry(0.115, 20, 16), ironMat);
+  bell.position.y = -0.235;
+  bell.scale.set(1, 0.92, 1);
+  g.add(bell);
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.02, 20), ironMat);
+  base.position.y = -0.335;
+  g.add(base);
+
+  return g;
+}
+
 export function buildProps(scene) {
   const group = new THREE.Group();
   scene.add(group);
@@ -73,7 +106,16 @@ export function buildProps(scene) {
   plate.visible = false;
   group.add(plate);
 
-  return { group, barbell, lCable, rCable, plate };
+  // Two bells: one per hand, or both parked at the same point for a
+  // two-handed hold (swing, goblet, two-hand deadlift).
+  const lKettlebell = makeKettlebell();
+  lKettlebell.visible = false;
+  group.add(lKettlebell);
+  const rKettlebell = makeKettlebell();
+  rKettlebell.visible = false;
+  group.add(rKettlebell);
+
+  return { group, barbell, lCable, rCable, plate, lKettlebell, rKettlebell };
 }
 
 const _vL = new THREE.Vector3();
@@ -81,7 +123,27 @@ const _vR = new THREE.Vector3();
 const _mid = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _xAxis = new THREE.Vector3(1, 0, 0);
+const _downAxis = new THREE.Vector3(0, -1, 0);
 const _dir = new THREE.Vector3();
+const _elbow = new THREE.Vector3();
+const _bellDir = new THREE.Vector3();
+
+// Where the bell points, given the hand and elbow world positions.
+//   hang     — straight down (dead hang, goblet, bottom of a swing)
+//   up       — straight up (locked out overhead)
+//   arm      — continues the line of the forearm (a swing at float, a snatch)
+//   rack     — folded back along the forearm, resting on it (the rack position)
+function bellDirection(orient, hand, elbow, out) {
+  if (orient === 'up') return out.set(0, 1, 0);
+  if (orient === 'arm' || orient === 'rack') {
+    out.copy(hand).sub(elbow);
+    if (out.lengthSq() < 1e-6) return out.set(0, -1, 0);
+    out.normalize();
+    if (orient === 'rack') out.negate();
+    return out;
+  }
+  return out.set(0, -1, 0);
+}
 
 // Hints accepted:
 //   barbell: true       — show bar between hands
@@ -90,16 +152,23 @@ const _dir = new THREE.Vector3();
 //   cables: 'twohand'   — two cable lines from each hand to a single high pulley point
 //   plate: true         — show plate held in hands (russian twist)
 //   latBar: 'show'/'hide' — show the lat bar piece on the lat station, sized between hands
+//   kettlebell: 'both' | 'left' | 'right' | 'each'
+//                       — 'both' parks one bell between the hands; 'each' gives
+//                         every hand its own; 'left'/'right' load a single side
+//   kbOrient: 'hang' | 'up' | 'arm' | 'rack'  — where the bell points (per side
+//                         overrides: kbOrientL / kbOrientR)
 export function updateProps(props, skel, hints, env) {
   // Default: hide everything
   props.barbell.visible = false;
   props.lCable.visible = false;
   props.rCable.visible = false;
   props.plate.visible = false;
+  props.lKettlebell.visible = false;
+  props.rKettlebell.visible = false;
   skel.lArm.dumbbell.visible = !!hints.dumbbells;
   skel.rArm.dumbbell.visible = !!hints.dumbbells;
 
-  if (!hints.barbell && !hints.cables && !hints.plate && !hints.latBar) return;
+  if (!hints.barbell && !hints.cables && !hints.plate && !hints.latBar && !hints.kettlebell) return;
 
   // Need world matrices to read hand positions.
   skel.root.updateMatrixWorld(true);
@@ -143,6 +212,34 @@ export function updateProps(props, skel, hints, env) {
       _q.setFromUnitVectors(_xAxis, _dir);
       // Apply rotation in latStation local space (latStation has no rotation, so world == local here)
       latBar.quaternion.copy(_q);
+    }
+  }
+
+  if (hints.kettlebell) {
+    const mode = hints.kettlebell;
+    const bells = [];
+    if (mode === 'both') {
+      // One bell held by both hands: park it at the midpoint, and aim it with
+      // whichever arm is available (the two arms are together anyway).
+      _mid.copy(_vL).add(_vR).multiplyScalar(0.5);
+      skel.lArm.elbowBend.getWorldPosition(_elbow);
+      bells.push([props.lKettlebell, _mid, _elbow, hints.kbOrient]);
+    } else {
+      if (mode === 'each' || mode === 'left') {
+        skel.lArm.elbowBend.getWorldPosition(_elbow);
+        bells.push([props.lKettlebell, _vL, _elbow.clone(), hints.kbOrientL || hints.kbOrient]);
+      }
+      if (mode === 'each' || mode === 'right') {
+        skel.rArm.elbowBend.getWorldPosition(_elbow);
+        bells.push([props.rKettlebell, _vR, _elbow.clone(), hints.kbOrientR || hints.kbOrient]);
+      }
+    }
+    for (const [bell, hand, elbow, orient] of bells) {
+      bell.visible = true;
+      bell.position.copy(hand);
+      bellDirection(orient, hand, elbow, _bellDir);
+      _q.setFromUnitVectors(_downAxis, _bellDir);
+      bell.quaternion.copy(_q);
     }
   }
 
